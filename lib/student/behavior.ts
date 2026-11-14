@@ -58,6 +58,7 @@ export interface PolicyContext {
   finishing: boolean;
   teacherRunSec: number; // current uninterrupted teacher speech
   recentConceptIds: string[];
+  latestConceptIds?: string[];
   understandingShown: string[]; // concepts the student already paraphrased
   rng: () => number;
 }
@@ -76,7 +77,7 @@ export function decideAction(ctx: PolicyContext): StudentAction {
   if (ctx.now - ctx.lastInterjectionAt < minGap) return { kind: 'none', reason: 'cooldown' };
 
   const monologue = ctx.teacherRunSec >= MONOLOGUE_SEC;
-  const plan = selectQuestion(model, { recentConceptIds: ctx.recentConceptIds, rng: ctx.rng, monologue });
+  const plan = selectQuestion(model, { recentConceptIds: ctx.recentConceptIds, latestConceptIds: ctx.latestConceptIds, rng: ctx.rng, monologue });
 
   // Show understanding after a clear explanation, unless something more pressing is waiting.
   if (model.behavior === 'understanding' && (!plan || plan.score < 1.3)) {

@@ -39,6 +39,7 @@ Setup ─► Start session ─► live session ───────────
 | Misconceptions | `lib/student/misconceptions.ts` | active → partially addressed → resolved; caps mastery while active |
 | Question selection | `lib/student/questions.ts` | Weighted scoring picks the target concept and question type |
 | Behavior | `lib/student/behavior.ts` | listening / curious / confused / understanding / challenging / responding + interjection policy |
+| Specific questions | `lib/student/dialogue.ts` | Rejects vague lines; builds a targeted fallback |
 | Segmentation | `lib/student/segments.ts` | Only settled speech is evaluated; echo filter |
 | Orchestration | `lib/student/engine.ts` | `SessionEngine`: single-flight evaluation, one utterance at a time, failure-safe |
 | Speech analysis | `lib/student/speech.ts` | WPM, pauses, fillers, longest stretch, talk share, response latency |
@@ -67,6 +68,8 @@ Setup ─► Start session ─► live session ───────────
 - An advanced-level challenge (0.9)
 - Curiosity about the next concept (0.5)
 
+**Specific, not vague.** When an explanation doesn't fully land, the evaluator records the exact question a learner would still have, grounded in the teacher's words (e.g. *"If gravity pulls the planets in, why don't they fall into the Sun?"*). Code stores it on the concept as an open gap. A clear, correct explanation, or a full answer to the student's question, closes it; a mere mention doesn't. Candidates with a known gap get +0.45, concepts from the most recent segment get +0.3, and a "clarify" with no specific target gets −0.35. `/api/speak` then checks the phrased line shares content words with the target and isn't a stock vague phrase (`lib/student/dialogue.ts`). If not, it retries once, then falls back to the recorded question verbatim. Gaps still open at the end become feedback evidence.
+
 Concepts asked about in the last two questions are penalized, and anything already answered well is excluded. A small seeded random bonus adds natural variety. The question type depends on the level: a kindergartner asks what a word means, a high schooler asks how two concepts relate, and an expert challenges. The policy never asks while the student is talking, during a per-level cooldown, or while waiting for an answer. Confusion shortens the cooldown, and a 75s monologue lowers the threshold for checking in.
 
 ### How speech is measured
@@ -75,7 +78,7 @@ Each final recognition result is timestamped on the client: start is when the re
 ## Testing
 
 ```bash
-npm test                    # 43 unit tests for all deterministic logic (node:test)
+npm test                    # 52 unit tests for all deterministic logic (node:test)
 npm run typecheck           # tsc --strict on the TypeScript modules
 bash tests/routes/run.sh    # real API route handlers with stubbed Next + SDK
 bash tests/browser/run.sh   # real UI in headless Chromium, simulated mic/TTS/API

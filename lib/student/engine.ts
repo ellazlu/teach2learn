@@ -212,6 +212,7 @@ export class SessionEngine {
       finishing: this.finishing,
       teacherRunSec: this.teacherRunSec(now),
       recentConceptIds: [...new Set(this.recentEvalConcepts.flat())],
+      latestConceptIds: this.recentEvalConcepts[this.recentEvalConcepts.length - 1] || [],
       understandingShown: this.understandingShown,
       rng: this.rng,
     });
@@ -301,7 +302,11 @@ export class SessionEngine {
         belief: mis?.belief || '',
         previousQuestion: prev?.text || '',
         teacherWords: lastQuote,
+        focusQuestion: plan?.focus?.question || '',
+        focusQuote: plan?.focus?.quote || '',
       },
+      // What a specific line should be about (checked in /api/speak).
+      anchors: [plan?.focus?.question, plan?.focus?.quote, plan?.type === 'define_term' ? term : '', concept?.name, ...(concept?.keyTerms || []), mis?.belief, prev?.text, related?.name].filter(Boolean),
       teacherSaid: recentTeacher,
       whatYouKnow,
       alreadyAsked: this.utterances.filter((u) => u.speaker === 'student').map((u) => u.text),

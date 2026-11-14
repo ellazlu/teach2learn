@@ -52,6 +52,24 @@ assert.equal((await r.json()).text, 'Wait, do plants eat dirt?');
 assert.match(globalThis.__sdkCalls.at(-1).messages[0].content[0].text, /You genuinely believe: "Plants eat soil"/);
 console.log('✓ /api/speak: intent comes from the app, quotes stripped');
 
+// speak: vague lines are retried, then replaced by a specific fallback
+const GAP = "If gravity pulls the planets in, why don't they fall into the Sun?";
+const gravityBody = { levelId: 'high', intent: 'clarify', details: { conceptName: 'Gravity and orbits', focusQuestion: GAP, focusQuote: 'pulls the planets toward the sun' }, anchors: [GAP, 'pulls the planets toward the sun', 'Gravity and orbits', 'gravity'], teacherSaid: 'gravity pulls the planets toward the sun', whatYouKnow: '', alreadyAsked: [] };
+let replies = ["Sorry, I sort of get the components of the solar system, but I'm not quite there. Could you explain it another way?", "You said gravity pulls the planets in, so why don't they fall into the Sun?"];
+globalThis.__sdkReply = () => ({ text: replies.shift() });
+let sp = await (await speak(req(gravityBody))).json();
+assert.equal(sp.source, 'retry');
+assert.match(sp.text, /gravity/);
+assert.match(globalThis.__sdkCalls.at(-1).messages[0].content[0].text, /too vague/);
+assert.match(globalThis.__sdkCalls.at(-1).messages[0].content[0].text, /You're stuck on one specific point/);
+replies = ['Can you explain it another way?', 'I am confused.'];
+sp = await (await speak(req(gravityBody))).json();
+assert.equal(sp.source, 'fallback');
+assert.equal(sp.text, GAP);
+console.log('✓ /api/speak: vague lines retried once, then replaced by the specific question');
+// evaluate schema asks for the specific gap
+await evaluate(req({ levelId: 'middle', segment: 'x', model: { concepts: [{ id: 'c1' }], misconceptions: [] } })).catch(() => {});
+
 // feedback: LLM path cites evidence; uncited dropped; LLM failure -> fallback
 const { initStudentModel } = await import('./out/knowledge.mjs');
 const extraction = { ...ext, concepts: ext.concepts };

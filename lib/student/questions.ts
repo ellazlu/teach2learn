@@ -12,7 +12,7 @@ export const W = {
   mentionedNotExplained: 1.1,
   weakExplanation: 0.6,
   prerequisiteGap: 1.4,
-  misconceptionActive: 2.2, // not yet voiced and on-topic: the student objects first
+  misconceptionActive: 2.8, // not yet voiced and on-topic: the student objects first
   misconceptionVoiced: 1.3, // already voiced: lower, so it doesn't nag
   misconceptionPartial: 1.2,
   followUp: 1.7,
@@ -20,6 +20,9 @@ export const W = {
   curiosity: 0.5,
   monologueBoost: 0.8,
   repeatPenalty: 0.9,
+  specificGap: 0.45, // we know exactly what the student is stuck on
+  latestBoost: 0.3, // concept from the most recent segment beats older ones
+  vaguePenalty: 0.35, // a "clarify"/"check in" with no specific target
   randomness: 0.25,
   threshold: 0.85,
   monologueThreshold: 0.6,
@@ -27,6 +30,7 @@ export const W = {
 
 export interface SelectContext {
   recentConceptIds: string[]; // concepts touched in the latest evaluated segments
+  latestConceptIds?: string[]; // concepts touched in the most recent segment only
   rng: () => number; // inject for deterministic tests
   monologue?: boolean; // teacher has talked a long time without a check-in
 }
@@ -36,6 +40,7 @@ interface Candidate {
   conceptId: string | null;
   misconceptionId: string | null;
   followsQuestionId: string | null;
+  focus: { question: string; quote: string } | null;
   reason: string;
   score: number;
 }
@@ -76,20 +81,26 @@ export function scoreCandidates(model: StudentModel, ctx: SelectContext): Candid
   const level = getLevel(model.levelId);
   const recent = new Set(ctx.recentConceptIds);
   const out: Candidate[] = [];
-  const add = (c: Omit<Candidate, 'followsQuestionId'> & { followsQuestionId?: string | null }) =>
-    out.push({ followsQuestionId: null, ...c });
+  const latest = new Set(ctx.latestConceptIds || []);
+  const add = (c: Omit<Candidate, 'followsQuestionId' | 'focus'> & { followsQuestionId?: string | null; focus?: Candidate['focus'] }) =>
+    out.push({ followsQuestionId: null, focus: null, ...c });
 
-  // Concepts: low mastery, mentioned-but-unexplained, weakly explained.
+  // Concepts: low mastery, mentioned-but-unexplained, weakly explained. When the
+  // evaluation recorded a specific sticking point, the question targets it.
   for (const c of model.concepts) {
     const isRecent = recent.has(c.id);
     const relevance = isRecent ? 1 : c.mentioned ? 0.5 : 0.15;
     const low = ((100 - c.mastery) / 100) * W.lowMastery * relevance;
+    const gap = (c.openGaps || [])[(c.openGaps || []).length - 1];
+    const focus = gap ? { question: gap.question, quote: gap.quote } : null;
+    const bonus = (focus ? W.specificGap : 0) + (latest.has(c.id) ? W.latestBoost : 0);
+    const why = (base: string) => (focus ? `${base}; stuck on "${focus.question}"` : base);
     if (c.mentioned && !c.explained) {
-      add({ type: conceptQuestionType('unexplained', c, level, model), conceptId: c.id, misconceptionId: null, reason: 'mentioned but not explained', score: low + W.mentionedNotExplained * (isRecent ? 1 : 0.6) });
-    } else if (c.explained && isRecent && c.mastery - c.initialMastery < 10) {
-      add({ type: conceptQuestionType('weak', c, level, model), conceptId: c.id, misconceptionId: null, reason: 'explained but not landing', score: low + W.weakExplanation });
+      add({ type: focus ? 'clarify' : conceptQuestionType('unexplained', c, level, model), conceptId: c.id, misconceptionId: null, focus, reason: why('mentioned but not explained'), score: low + W.mentionedNotExplained * (isRecent ? 1 : 0.6) + bonus });
+    } else if (c.explained && isRecent && (c.mastery - c.initialMastery < 10 || focus)) {
+      add({ type: focus ? 'clarify' : conceptQuestionType('weak', c, level, model), conceptId: c.id, misconceptionId: null, focus, reason: why('explained but not landing'), score: low + W.weakExplanation + bonus });
     } else if (c.mentioned) {
-      add({ type: conceptQuestionType('low', c, level, model), conceptId: c.id, misconceptionId: null, reason: 'low mastery', score: low });
+      add({ type: focus ? 'clarify' : conceptQuestionType('low', c, level, model), conceptId: c.id, misconceptionId: null, focus, reason: why('low mastery'), score: low + bonus });
     }
     // Advanced students push on ideas they already follow.
     if ((level.id === 'college' || level.id === 'expert') && c.explained && isRecent && c.mastery >= 55) {
@@ -141,6 +152,7 @@ export function scoreCandidates(model: StudentModel, ctx: SelectContext): Candid
       let s = c.score;
       if (c.type !== 'follow_up' && c.conceptId && lastTwo.some((q) => q.conceptId === c.conceptId)) s -= W.repeatPenalty;
       if (ctx.monologue && c.conceptId && recent.has(c.conceptId)) s += W.monologueBoost;
+      if ((c.type === 'clarify' || c.type === 'check_in') && !c.focus) s -= W.vaguePenalty;
       s += ctx.rng() * W.randomness;
       return { ...c, score: Math.round(s * 1000) / 1000 };
     })

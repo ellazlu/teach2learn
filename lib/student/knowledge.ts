@@ -19,7 +19,7 @@ import type {
   StudentModel,
 } from './types.ts';
 import { getLevel, type Level } from '../levels.ts';
-import { quoteAppearsIn } from '../verify.ts';
+import { normalize, quoteAppearsIn } from '../verify.ts';
 import { masteryCapFor, nextMisconceptionStatus, selectMisconceptions } from './misconceptions.ts';
 
 export const MAX_GAIN = 28; // mastery points for a perfect explanation of an unknown concept
@@ -103,6 +103,7 @@ export function initStudentModel(extraction: Extraction, levelId: LevelId): Stud
       explained: false,
       explainCount: 0,
       evidence: [],
+      openGaps: [],
     };
   });
   const misconceptions = selectMisconceptions(extraction.misconceptions, extraction.concepts, level.params.misconceptionCount);
@@ -150,6 +151,17 @@ export function prerequisiteFactor(concept: ConceptState, model: StudentModel): 
     .filter((m): m is number => typeof m === 'number');
   if (!ms.length) return 1;
   return 0.45 + 0.55 * Math.min(1, Math.min(...ms) / 50);
+}
+
+const MAX_GAPS = 3;
+
+// Record a specific sticking point (deduplicated, newest last).
+function openGap(c: ConceptState, question: string, quote: string, segmentId: string, at: number): boolean {
+  const q = String(question || '').trim().slice(0, 160);
+  if (!q) return false;
+  const gaps = (c.openGaps || []).filter((g) => normalize(g.question) !== normalize(q));
+  c.openGaps = [...gaps, { question: q, quote, segmentId, at }].slice(-MAX_GAPS);
+  return true;
 }
 
 export interface ApplyResult {
@@ -220,8 +232,10 @@ export function applyEvaluation(
       continue;
     }
     c.mentioned = true;
+    c.openGaps = c.openGaps || [];
 
     if (!p.explained) {
+      openGap(c, p.gap, p.quote, sid, at);
       c.confidence = clamp(c.confidence + 0.02, 0, 0.95);
       events.push({ type: 'mentioned_only', segmentId: sid, at, conceptId: id, quote: p.quote });
       continue;
@@ -242,8 +256,13 @@ export function applyEvaluation(
     const fit = levelFitFactor(p.level_fit, level.id);
     const example = p.used_example ? (['kindergarten', 'middle', 'high'].includes(level.id) ? 1.15 : 1.05) : 1;
     const quality = CORRECTNESS_WEIGHT[p.correctness] * CLARITY_WEIGHT[p.clarity] * fit * example;
+    // A clear, correct, well-pitched explanation closes the student's open
+    // questions about this concept; anything less can open a specific one.
+    const landed = p.correctness === 'correct' && p.clarity === 'clear' && fit >= 0.6;
+    if (landed) c.openGaps = [];
+    else openGap(c, p.gap, p.quote, sid, at);
     if (p.clarity === 'unclear' || fit < 0.6) {
-      events.push({ type: 'unclear_explanation', segmentId: sid, at, conceptId: id, quote: p.quote, levelFit: p.level_fit });
+      events.push({ type: 'unclear_explanation', segmentId: sid, at, conceptId: id, quote: p.quote, levelFit: p.level_fit, gap: String(p.gap || '').trim() });
     }
     if (p.used_example) events.push({ type: 'used_example', segmentId: sid, at, conceptId: id, quote: p.quote });
 
@@ -282,6 +301,8 @@ export function applyEvaluation(
     if (quality === 'full') {
       q.status = 'answered';
       q.answerQuote = r.quote;
+      const c = next.concepts.find((x) => x.id === q.conceptId);
+      if (c) c.openGaps = []; // the question about it was answered
     } else if (quality === 'partial') {
       q.status = 'partially_answered';
       q.answerQuote = r.quote;

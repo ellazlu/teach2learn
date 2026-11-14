@@ -42,6 +42,15 @@ export interface Evidence {
   delta: number; // mastery change (0 if none)
 }
 
+// A specific thing the student is still stuck on, phrased as the question it
+// would ask. Opened by an unclear/partial explanation, closed by a clear one.
+export interface OpenGap {
+  question: string;
+  quote: string; // the teacher's words that left it open
+  segmentId: string;
+  at: number;
+}
+
 export interface ConceptState extends ExtractedConcept {
   initialMastery: number; // 0..100
   mastery: number; // 0..100
@@ -50,6 +59,7 @@ export interface ConceptState extends ExtractedConcept {
   explained: boolean; // explained at least once correctly enough to count
   explainCount: number;
   evidence: Evidence[];
+  openGaps: OpenGap[]; // newest last; may be missing on sessions saved before this field existed
 }
 
 export type MisconceptionStatus = 'active' | 'partially_addressed' | 'resolved';
@@ -133,6 +143,7 @@ export interface ConceptProposal {
   level_fit: LevelFit;
   used_example: boolean;
   quote: string;
+  gap: string; // the specific question a learner would still have, or ''
 }
 
 export interface MisconceptionProposal {
@@ -155,7 +166,7 @@ export type KnowledgeEvent =
   | { type: 'mastery_change'; segmentId: string; at: number; conceptId: string; from: number; to: number; quote: string; reason: string }
   | { type: 'mentioned_only'; segmentId: string; at: number; conceptId: string; quote: string }
   | { type: 'incorrect_explanation'; segmentId: string; at: number; conceptId: string; quote: string }
-  | { type: 'unclear_explanation'; segmentId: string; at: number; conceptId: string; quote: string; levelFit: LevelFit }
+  | { type: 'unclear_explanation'; segmentId: string; at: number; conceptId: string; quote: string; levelFit: LevelFit; gap: string }
   | { type: 'misconception_change'; segmentId: string; at: number; misconceptionId: string; from: MisconceptionStatus; to: MisconceptionStatus; quote: string }
   | { type: 'undefined_term'; segmentId: string; at: number; term: string; quote: string }
   | { type: 'question_status'; segmentId: string; at: number; questionId: string; status: QuestionStatus; quote: string }
@@ -171,6 +182,7 @@ export interface QuestionPlan {
   conceptId: string | null;
   misconceptionId: string | null;
   followsQuestionId: string | null;
+  focus: { question: string; quote: string } | null; // the specific sticking point, when known
   reason: string;
   score: number;
 }

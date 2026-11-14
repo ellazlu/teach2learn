@@ -13,6 +13,7 @@ export type EvidenceKind =
   | 'undefined_term'
   | 'incorrect_explanation'
   | 'unclear_explanation'
+  | 'open_question'
   | 'misconception_resolved'
   | 'misconception_partial'
   | 'misconception_unaddressed'
@@ -66,7 +67,10 @@ export function buildEvidence({ initial, final, events, metrics, learning }: Evi
   for (const e of events) {
     if (e.type === 'undefined_term') push({ kind: 'undefined_term', at: e.at, label: `Used "${e.term}" without explaining it to ${level.who}.`, quote: e.quote, positive: false });
     if (e.type === 'incorrect_explanation') push({ kind: 'incorrect_explanation', at: e.at, label: `Explanation of ${name(e.conceptId)} doesn't match the material.`, quote: e.quote, positive: false });
-    if (e.type === 'unclear_explanation') push({ kind: 'unclear_explanation', at: e.at, label: `Explanation of ${name(e.conceptId)} was ${e.levelFit === 'too_advanced' ? `too advanced for ${level.who}` : 'hard to follow'}.`, quote: e.quote, positive: false });
+    if (e.type === 'unclear_explanation') {
+      const what = e.levelFit === 'too_advanced' ? `too advanced for ${level.who}` : 'hard to follow';
+      push({ kind: 'unclear_explanation', at: e.at, label: `Explanation of ${name(e.conceptId)} was ${what}${e.gap ? `; it left the student wondering "${e.gap}"` : ''}.`, quote: e.quote, positive: false });
+    }
     if (e.type === 'mastery_change' && e.to - e.from >= 8) push({ kind: 'mastery_gain', at: e.at, label: `Student's grasp of ${name(e.conceptId)} rose from ${e.from} to ${e.to} (simulated).`, quote: e.quote, positive: true });
     if (e.type === 'used_example') push({ kind: 'used_example', at: e.at, label: `Used an example or analogy for ${name(e.conceptId)}.`, quote: e.quote, positive: true });
     if (e.type === 'checked_understanding') push({ kind: 'checked_understanding', at: e.at, label: 'Checked whether the student understood.', quote: e.quote, positive: true });
@@ -74,6 +78,13 @@ export function buildEvidence({ initial, final, events, metrics, learning }: Evi
       const m = final.misconceptions.find((x) => x.id === e.misconceptionId);
       if (e.to === 'resolved') push({ kind: 'misconception_resolved', at: e.at, label: `Corrected the student's belief that "${m?.belief}".`, quote: e.quote, positive: true });
       if (e.to === 'partially_addressed') push({ kind: 'misconception_partial', at: e.at, label: `Partly addressed the belief that "${m?.belief}", but didn't settle it.`, quote: e.quote, positive: false });
+    }
+  }
+
+  // Specific questions the student was still left with at the end.
+  for (const c of final.concepts) {
+    for (const g of c.openGaps || []) {
+      push({ kind: 'open_question', at: g.at, label: `By the end, the student was still wondering: "${g.question}" (about ${c.name}).`, quote: g.quote, positive: false });
     }
   }
 
@@ -123,6 +134,7 @@ const FALLBACK: Partial<Record<EvidenceKind, (e: EvidenceItem) => Omit<Suggestio
   question_partial: (e) => ({ title: 'Finish answering the question', detail: e.label }),
   undefined_term: (e) => ({ title: 'Define terms before using them', detail: e.label }),
   unclear_explanation: (e) => ({ title: 'Make this explanation simpler', detail: `${e.label} Try an everyday example.` }),
+  open_question: (e) => ({ title: 'Answer what the student was still wondering', detail: `${e.label} If you can't answer it confidently, that's a gap worth reviewing.` }),
   long_run: (e) => ({ title: 'Check in more often', detail: `${e.label} A quick "does that make sense?" gives the student a chance to tell you they're lost.` }),
   no_checks: (e) => ({ title: 'Check for understanding', detail: e.label }),
   slow_response: (e) => ({ title: 'Review what made you hesitate', detail: `${e.label} Long pauses before answering can be fine, but can also mark something you're unsure about.` }),
