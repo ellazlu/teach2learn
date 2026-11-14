@@ -92,6 +92,7 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
       teachingNow: teachingElapsed,
       timeLimitSec,
       onChange: setSnap,
+      persona: setup.challenge?.scenario?.studentProfile || '',
     });
     engineRef.current = engine;
     setSnap(engine.snapshot());
@@ -105,7 +106,13 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
     setExtractState('loading');
     setExtractError('');
     try {
-      const ext = await postJSON('/api/prepare', { sources: setup.sources, topic: setup.topic, levelId: level.id, focus: setup.focus });
+      const ext = await postJSON('/api/prepare', {
+        sources: setup.sources,
+        topic: setup.topic,
+        levelId: level.id,
+        focus: setup.focus,
+        misconception: setup.challenge?.scenario?.misconception || '',
+      });
       onExtraction(ext);
       engineRef.current?.setExtraction(ext);
       setExtractState('ready');
@@ -291,6 +298,12 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
           </button>
         </div>
       </div>
+
+      {setup.challenge && (
+        <p className="challenge-goal">
+          <span className="label">Challenge</span> {setup.challenge.goal}
+        </p>
+      )}
 
       {(micState === 'unsupported' || micState === 'blocked') && (
         <p className="notice">

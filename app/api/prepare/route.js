@@ -11,7 +11,7 @@ export const maxDuration = 60;
 
 export async function POST(req) {
   try {
-    const { sources = [], topic = '', levelId, focus = '' } = await req.json();
+    const { sources = [], topic = '', levelId, focus = '', misconception = '' } = await req.json();
     const fromMaterial = Array.isArray(sources) && sources.length > 0;
     if (!fromMaterial && !topic.trim()) return badRequest('Enter a topic or upload some notes.');
 
@@ -23,6 +23,9 @@ export async function POST(req) {
         text:
           (topic.trim() ? `Topic: ${topic.trim()}\n` : '') +
           (focus.trim() ? `Focus instructions from the user: ${focus.trim()}\n` : '') +
+          (String(misconception).trim()
+            ? `Practice scenario: the student's first misconception must be this belief (attach it to the concept it belongs to): ${String(misconception).trim().slice(0, 200)}\n`
+            : '') +
           `\nExtract the concepts and misconceptions for ${level.who}.`,
       },
     ];

@@ -5,6 +5,7 @@
 import type { Extraction, KnowledgeEvent, LevelId, Segment, SpeechMetrics, StudentModel } from './student/types.ts';
 import type { ConceptSummary, LearningSummary } from './student/knowledge.ts';
 import type { EvidenceItem, FeedbackItem } from './student/evidence.ts';
+import type { Scores } from './coach/rubric.ts';
 
 export const KEY = 'teach2learn-history-v4';
 export const LEGACY_KEYS = ['teach2learn-history-v3', 'teach2learn-history-v1'];
@@ -37,6 +38,21 @@ export interface SessionRecord {
   evidence: EvidenceItem[];
   usedFallback: boolean;
   latencies: number[]; // ms from end of teacher speech to student audio
+  // Added with the coach (optional so older v4 records stay valid):
+  ratings?: Scores; // deterministic 1-5 ratings, computed client-side at save
+  challengeId?: string | null; // the practice challenge this session attempted
+  coach?: CoachSummary | null; // the coach's verdict, filled in after it runs
+}
+
+export interface CoachSummary {
+  status: 'pending' | 'done' | 'failed';
+  agent?: 'deepagents' | 'fallback';
+  focusSkill?: string | null;
+  reason?: string;
+  challengeTitle?: string | null;
+  nextChallengeId?: string | null;
+  outcome?: { verdict: string; met: number; total: number; judged: number; adjustment: string } | null;
+  error?: string;
 }
 
 // Sessions saved by earlier versions of the app (rubric era and v3), kept readable.

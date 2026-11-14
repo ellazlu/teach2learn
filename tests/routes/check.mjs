@@ -5,6 +5,7 @@ import { POST as reply } from './out/reply.mjs';
 import { POST as verify } from './out/verify.mjs';
 import { GET as ttsGet, POST as ttsPost } from './out/tts.mjs';
 import { POST as feedback } from './out/feedback.mjs';
+import { POST as coach } from './out/coach.mjs';
 
 process.env.ANTHROPIC_API_KEY = 'test';
 globalThis.__sdkCalls = [];
@@ -26,7 +27,9 @@ assert.deepEqual(ext.concepts.map((c) => c.id), ['c1', 'c2', 'c3'], 'capped at 3
 assert.deepEqual(ext.concepts[1].prerequisites, ['c1']);
 assert.match(last().system, /1-3 KEY concepts/);
 allStrict(last().output_config.format.schema);
-console.log('✓ /api/prepare: 1-3 key concepts, sanitized, structured output');
+r = await prepare(req({ topic: 'Photosynthesis', levelId: 'middle', sources: [], misconception: 'Plants eat soil' }));
+assert.match(last().messages[0].content.at(-1).text, /first misconception must be this belief[^\n]*Plants eat soil/);
+console.log('✓ /api/prepare: 1-3 key concepts, sanitized, structured output, challenge misconception passed through');
 
 // ---- evaluate: dynamic enums, gap field -------------------------------------------
 globalThis.__sdkReply = () => ({ concepts: [{ concept_id: 'C1', explained: true, correctness: 'Correct', clarity: 'clear', level_fit: 'appropriate', used_example: false, quote: 'x y z', gap: '' }], misconceptions: [], undefined_terms: [], question_response: { quality: 'none', quote: '' }, checked_understanding: { happened: false, quote: '' } });
@@ -54,6 +57,12 @@ assert.equal(sent.max_tokens, 160);
 assert.match(sent.messages[0].content[0].text, /<teacher_just_said>\nplants make their own food/);
 assert.match(sent.messages[0].content[0].text, /You genuinely believe: "Plants get their food from the soil\."/);
 assert.match(sent.system, /bright and you learn from good explanations/);
+// a practice challenge's student profile reaches the student's prompt
+globalThis.__streamChunks = ['ok'];
+r = await reply(req({ ...body, persona: 'Rarely says when it is lost.' }));
+await r.text();
+assert.match(last().messages[0].content[0].text, /<who_you_are_today>\nRarely says when it is lost\./);
+assert.doesNotMatch(sent.messages[0].content[0].text, /who_you_are_today/, 'no persona block without a challenge');
 // abort mid-stream stops the model call
 globalThis.__streamChunks = Array.from({ length: 50 }, () => 'word ');
 globalThis.__streamAborted = false;
@@ -137,4 +146,26 @@ assert.ok(fb.teaching.improve.evidence);
 fb = await (await feedback(req({ levelId: 'middle', topicTitle: 'P', events: [], utterances: [] }))).json();
 assert.equal(fb.spoke, false);
 console.log('✓ /api/feedback: three evidence-backed items, concept summary from verification, fallback without the LLM');
+
+// ---- coach: runs after feedback; Deep Agents isn't installed here -> fallback -------------
+process.env.COACH_LOG = 'off';
+const long = { id: 'u0', speaker: 'teacher', text: 'so plants are like little factories that take in light and water and air and then they turn all of that into sugar which is food for the plant and the thylakoid helps with that part', start: 0, end: 4 };
+const fbFull = await (await feedback(req({ levelId: 'middle', topicTitle: 'P', initial, final, events, utterances: [long, ...utterances] }))).json();
+const session = { version: 4, id: 'sess1', createdAt: '2026-11-14T10:00:00Z', topicTitle: 'P', levelId: 'middle', timeLimitSec: 120, timeUsedSec: 60,
+  utterances: [long, ...utterances], events, initialModel: initial, finalModel: final, metrics: fbFull.metrics, evidence: fbFull.evidence, teaching: fbFull.teaching, challengeId: null };
+r = await coach(req({ session, history: null, activeChallenge: null }));
+assert.equal(r.status, 200);
+let co = await r.json();
+assert.equal(co.agent, 'fallback');
+assert.match(co.error, /Deep Agents unavailable/, 'missing package detected at runtime, not at build');
+assert.equal(co.ratings.communication.score, 3, 'one undefined term');
+assert.ok(co.evaluation.focusSkill && co.challenge.criteria.length >= 1);
+assert.ok(co.log.some((l) => l.type === 'tool' && l.name === 'score_session'));
+delete process.env.ANTHROPIC_API_KEY;
+co = await (await coach(req({ session, history: null, activeChallenge: null }))).json();
+assert.match(co.error, /No ANTHROPIC_API_KEY/);
+assert.equal((await coach(req({ session: { id: 'x' } }))).status, 400, 'malformed input rejected');
+assert.equal((await coach(new Request('http://x', { method: 'POST', body: 'nope' }))).status, 400);
+process.env.ANTHROPIC_API_KEY = 'test';
+console.log('✓ /api/coach: rubric ratings, focus + challenge saved, graceful fallback without Deep Agents or a key');
 console.log('\nALL ROUTE CHECKS PASSED');

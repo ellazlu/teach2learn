@@ -9,11 +9,13 @@ import { EXTRACTION } from '../fixtures.ts';
 import { computeSpeechMetrics } from '../../lib/student/speech.ts';
 import { learningSummary, conceptSummary } from '../../lib/student/knowledge.ts';
 import { buildEvidence, fallbackThree } from '../../lib/student/evidence.ts';
+import { runLocalCoach } from '../../lib/coach/record.ts';
 
 window.__log = [];
 const log = (x) => window.__log.push(x);
 window.__lat = { evaluate: 1200, replyFirstToken: 400, replyChunk: 50, verify: 600 };
-window.__calls = { evaluate: 0, reply: [], verify: 0, feedback: 0 };
+window.__calls = { evaluate: 0, reply: [], verify: 0, feedback: 0, coach: [], prepare: [], personas: [] };
+window.__coachFail = false;
 window.__failNextEvaluate = false;
 window.__ttsCalls = [];
 
@@ -111,6 +113,7 @@ window.fetch = async (url, opts = {}) => {
   const body = opts.body ? JSON.parse(opts.body) : {};
   if (url === '/api/tts' && method === 'GET') return json({ provider: 'browser' });
   if (url === '/api/prepare') {
+    window.__calls.prepare.push(body);
     await sleep(80);
     return json(EXTRACTION);
   }
@@ -138,6 +141,7 @@ window.fetch = async (url, opts = {}) => {
   }
   if (url === '/api/reply') {
     window.__calls.reply.push(body.intent);
+    window.__calls.personas.push(body.persona || '');
     return new Response(streamText(REPLIES[body.intent] || 'Okay, that makes sense.', opts.signal), { headers: { 'Content-Type': 'text/plain' } });
   }
   if (url === '/api/verify') {
@@ -153,6 +157,14 @@ window.fetch = async (url, opts = {}) => {
     const evidence = buildEvidence({ initial: body.initial, final: body.final, events: body.events, metrics, learning });
     const three = fallbackThree(evidence);
     return json({ teaching: three, usedFallback: true, spoke: true, concepts: conceptSummary(body.final), evidence, metrics, learning });
+  }
+  if (url === '/api/coach') {
+    // Stands in for the server route: the same deterministic coach the route
+    // falls back to (Deep Agents can't run in this harness).
+    window.__calls.coach.push(body);
+    await sleep(300);
+    if (window.__coachFail) return json({ error: 'simulated coach outage' }, 500);
+    return json(await runLocalCoach(body, 'harness: deterministic coach'));
   }
   return json({ error: `unknown ${url}` }, 404);
 };

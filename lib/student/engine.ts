@@ -50,6 +50,7 @@ export interface EngineDeps {
   timeLimitSec: number;
   onChange?: (snap: EngineSnapshot) => void;
   seed?: number;
+  persona?: string; // practice-challenge student profile, if any
 }
 
 export interface EngineSnapshot {
@@ -484,6 +485,7 @@ export class SessionEngine {
       teacherJustSaid: turnText,
       previousQuestion: this.lastStudentWasQuestion ? lastStudentLine : '',
       alreadySaid: this.utterances.filter((u) => u.speaker === 'student').map((u) => u.text).slice(-8),
+      ...(this.deps.persona ? { persona: this.deps.persona } : {}),
     };
   }
 

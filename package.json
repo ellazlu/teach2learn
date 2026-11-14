@@ -11,9 +11,15 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "latest",
+    "@langchain/anthropic": "latest",
+    "@langchain/core": "latest",
+    "@langchain/langgraph": "latest",
+    "deepagents": "latest",
+    "langchain": "latest",
     "next": "latest",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "zod": "latest"
   },
   "devDependencies": {
     "typescript": "^5",

@@ -123,13 +123,78 @@ try {
   for (const s of ['Your teaching', 'What went well', 'What to improve', 'Try next time', 'Student understanding', 'Demonstrated understanding', 'Not yet verified']) {
     assert.ok(results.includes(s), `results include "${s}"`);
   }
-  assert.doesNotMatch(results, /rubric|score|\d+%\s*(mastery)/i);
+  assert.doesNotMatch(results, /\d+%\s*(mastery)/i);
   assert.equal(await page.$$eval('.three-item', (n) => n.length), 3);
+  const ratings = await page.$$eval('.rating', (els) => els.map((e) => ({ label: e.querySelector('.rating-label').textContent, score: e.querySelector('.rating-score')?.textContent || e.querySelector('.rating-na')?.textContent, why: e.querySelector('.rating-why').textContent })));
+  assert.deepEqual(ratings.map((r) => r.label), ['Engagement', 'Communication', 'Teaching effectiveness']);
+  assert.ok(ratings.every((r) => /^[1-5]\/5$/.test(r.score) || r.score === 'Not enough evidence') && ratings.every((r) => r.why.length > 10), JSON.stringify(ratings));
+  assert.equal(ratings[2].score, '5/5', 'misconception resolved + demonstrated + example');
+  assert.equal(ratings[1].score, '3/5', 'one undefined term (thylakoid)');
+  step(`three 1-5 ratings with explanations: ${ratings.map((r) => r.score).join(', ')}`);
+  await page.click('.evidence-details summary');
   assert.equal(await page.textContent('.stats .stat:nth-child(4) .stat-v'), '1', 'the check-in was counted');
+  assert.equal(await page.$$eval('.rubric-item', (n) => n.length), 3);
+  assert.ok((await page.$$('.evidence-list li')).length >= 3);
+  step('expandable evidence section: evidence list, speech stats, rubric with the factors that moved each rating');
   const q = await page.$eval('.evidence q', (el) => getComputedStyle(el, '::before').content);
   assert.equal(q, 'open-quote');
   step('feedback: exactly three teaching items + concept summary with the three verification labels');
+  await page.waitForSelector('.challenge-card button:has-text("Start next challenge")', { timeout: 8000 });
+  const card = await page.textContent('.challenge-card');
+  assert.match(card, /Why:/);
+  assert.equal(await page.evaluate(() => window.__calls.coach.length), 1, 'coach ran once, after feedback');
+  assert.equal(await page.evaluate(() => window.__calls.coach[0].history.sessions.length), 0, 'first-time user: no history');
+  step('coach ran in the background after feedback and set a challenge (prominent Next Challenge button)');
   await shot('3-results');
+
+  // 5b) Next Challenge launches the coach's scenario directly into a session.
+  const challengeTitle = await page.textContent('.challenge-card .next h3');
+  await page.click('.challenge-card button:has-text("Start next challenge")');
+  await page.waitForSelector('.challenge-goal');
+  await page.waitForFunction(() => window.__rec?.active, null, { timeout: 8000 });
+  step(`Next Challenge ("${challengeTitle}") started a session with its goal shown`);
+  await say('so plants make their own food from sunlight water and air, the soil only gives water and minerals, the food is sugar made in the leaves, does that make sense');
+  await page.waitForFunction(() => window.__calls.reply.length >= 4, null, { timeout: 8000 });
+  const personas = await page.evaluate(() => window.__calls.personas);
+  assert.ok(personas.at(-1).length > 20, 'the student plays the scenario profile');
+  step('the simulated student received the challenge scenario profile');
+  await page.waitForFunction(() => window.__rec?.active, null, { timeout: 8000 });
+  await say('and the food the plant makes is sugar which it uses to grow, so the leaves are where the cooking happens');
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => (window.__coachFail = true));
+  await page.click('button:has-text("End session")');
+  await page.waitForSelector('.results', { timeout: 15000 });
+  await page.waitForSelector('.challenge-card .outcome .criteria li', { timeout: 8000 });
+  const outcome = await page.textContent('.challenge-card .outcome');
+  assert.ok(outcome.includes(challengeTitle), 'attempted challenge shown');
+  assert.match(outcome, /you: |not enough evidence/);
+  await page.waitForSelector('.challenge-card .next button', { timeout: 8000 });
+  step('attempt judged against the same criteria; coach outage handled by the in-browser fallback');
+  await shot('3b-challenge-results');
+
+  // 5c) Progress dashboard.
+  await page.click('.topnav button:has-text("Progress")');
+  await page.waitForSelector('.progress .chart-plot svg');
+  assert.equal(await page.$$eval('.chart-plot polyline', (n) => n.length), 3, 'one line per category');
+  assert.equal(await page.$$eval('.legend li', (n) => n.length), 3);
+  assert.equal(await page.$$eval('.end-label', (n) => n.length), 3, 'direct labels');
+  const box = await page.$eval('.chart-plot svg', (e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+  await page.mouse.move(box.x + box.w * 0.7, box.y + box.h / 2);
+  await page.waitForSelector('.tooltip');
+  assert.equal(await page.$$eval('.tooltip .tt-row', (n) => n.length), 3);
+  step('progress chart: three lines, legend, direct labels, hover tooltip');
+  await shot('5-progress');
+  await page.click('.chart-bar button:has-text("Show as table")');
+  assert.equal(await page.$$eval('.chart table tbody tr', (n) => n.length), 2);
+  await page.click('.chart-bar button:has-text("Show chart")');
+  assert.equal(await page.$$eval('.progress .panel table.data:not(.compact) tbody tr', (n) => n.length), 2, 'recent sessions');
+  assert.ok(await page.$('.current .btn.primary'), 'current challenge with a start/retry button');
+  await page.click('.coach-log summary');
+  const logText = await page.textContent('.coach-log');
+  assert.match(logText, /score_session/);
+  assert.match(logText, /Coach service unavailable/);
+  step('progress dashboard: recent sessions, current challenge, coach activity log');
+  await page.click('.page-head button:has-text("Back")');
 
   // 6) Persistence.
   await page.reload();
