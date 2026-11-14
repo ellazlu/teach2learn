@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { callTool, sourcesToBlocks, MODELS } from '../../../lib/claude.js';
+import { callJSON, sourcesToBlocks, MODELS } from '../../../lib/claude.js';
 import { getLevel } from '../../../lib/levels.js';
 import { prepSystem, PREP_TOOL } from '../../../lib/prompts.js';
 import { verifyPlan } from '../../../lib/verify.js';
@@ -25,11 +25,11 @@ export async function POST(req) {
       },
     ];
 
-    const raw = await callTool({
+    const raw = await callJSON({
       model: MODELS.smart,
       system: prepSystem(level),
       content,
-      tool: PREP_TOOL,
+      schema: PREP_TOOL.input_schema,
       maxTokens: 6000,
     });
 

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { callTool, sourcesToBlocks, MODELS } from '../../../lib/claude.js';
+import { callJSON, sourcesToBlocks, MODELS } from '../../../lib/claude.js';
 import { getLevel } from '../../../lib/levels.js';
 import { gradeSystem, gradeUserText, GRADE_TOOL } from '../../../lib/prompts.js';
 import { finalizeGrade, emptyGrade } from '../../../lib/grading.js';
@@ -16,11 +16,11 @@ export async function POST(req) {
     if (!text) return NextResponse.json(emptyGrade(plan));
 
     const level = getLevel(levelId);
-    const raw = await callTool({
+    const raw = await callJSON({
       model: MODELS.smart,
       system: gradeSystem(level),
       content: [...sourcesToBlocks(sources || []), { type: 'text', text: gradeUserText(plan, text, notes) }],
-      tool: GRADE_TOOL,
+      schema: GRADE_TOOL.input_schema,
       maxTokens: 8000,
     });
 
