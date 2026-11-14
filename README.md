@@ -1,72 +1,100 @@
 # teach2learn
 
-Learn it by teaching it. Upload your material, pick who you're teaching (kindergartner → expert), and explain it out loud before the timer runs out. An AI learner takes notes as you talk, then its notebook is graded against a rubric built only from your material.
+Learn it by teaching it. Pick a topic (and optionally upload notes), pick who you're teaching (kindergartner → expert), hit **Start session**, and explain it out loud. A simulated student listens, learns (or doesn't), voices its misconceptions, and asks questions. At the end you see what it learned and evidence-backed suggestions for teaching it better.
 
-## Run it (5 minutes)
+The student is not just a personality prompt: it has an explicit knowledge model that code updates deterministically. The LLM only proposes observations and phrases dialogue.
 
-1. Install [Node.js](https://nodejs.org) 20 or newer.
-2. In this folder:
-   ```bash
-   npm install
-   cp .env.example .env.local     # then paste your Anthropic API key into .env.local
-   npm run dev
-   ```
-3. Open **http://localhost:3000 in Chrome** and allow the microphone.
+## Run it
 
-No mic, or not on Chrome? Use the **"Type instead"** box on the session screen. It's also the fastest way to test without talking.
+Needs Node 22.6+ and Chrome.
 
-### Deploy for judges
 ```bash
-npx vercel
+npm install
+cp .env.example .env.local     # add your Anthropic API key
+npm run dev                    # http://localhost:3000 in Chrome, allow the mic
 ```
-Then add `ANTHROPIC_API_KEY` under Project → Settings → Environment Variables and redeploy. The mic only works over HTTPS (Vercel gives you that) or on localhost.
+
+No mic? Use **Type instead** under the conversation.
 
 ## How it works
 
 ```
-Setup ──► /api/prepare ──► Overview + rubric ──► Session ──► /api/grade ──► Results
-            (Sonnet)                               │            (Sonnet)
-                                                   └─ every 15s ─► /api/notes (Haiku)
+Setup ─► Start session ─► live session ───────────────────────────────► End ─► feedback
+            │                 │
+   /api/prepare (bg)    mic → final results → stable segments
+   concepts +                  │
+   misconceptions        /api/evaluate  (LLM proposes observations + quotes)
+            │                  │
+            └──► StudentModel ◄┘ applyEvaluation()  ← deterministic, quote-checked
+                      │
+              behavior state machine → decideAction() → selectQuestion()  ← deterministic
+                      │
+                 /api/speak  (LLM phrases the chosen intent in character) → TTS
 ```
 
-| Step | What happens | Honesty guardrail |
+| Module | File | What it does |
 |---|---|---|
-| **Prepare** | Reads your files (PDFs go to Claude directly, no text extraction) and returns an overview, every concept, and a level-specific rubric | Every item must quote the source. For text sources, code checks the quote really exists and drops anything that doesn't (`lib/verify.js`) |
-| **Notes** | Browser speech-to-text → every ~15s the new speech goes to the note-taker, playing the chosen learner | It **never sees the rubric or source**, so it can't fill in what you "should" have said. It writes `😕 Lost me` when you use something above the learner's level |
-| **Grade** | Rubric + notebook + transcript → met / partial / missing, misconceptions, outside knowledge, tips | Credit requires a quote from your transcript, and code checks it's really there (`lib/grading.js`). "Lost me"-only coverage counts as partial. Outside knowledge only counts if it's tied to a real concept from your material, and it never changes the score |
+| Concept extraction | `app/api/prepare`, `lib/prompts.js` | 5–10 concepts (difficulty, prerequisites, key terms) + realistic misconceptions, from notes or a topic name |
+| Knowledge model | `lib/student/knowledge.ts` | Initial mastery per level/difficulty/prerequisites; `applyEvaluation()` update engine |
+| Misconceptions | `lib/student/misconceptions.ts` | active → partially addressed → resolved; caps mastery while active |
+| Question selection | `lib/student/questions.ts` | Weighted scoring picks the target concept and question type |
+| Behavior | `lib/student/behavior.ts` | listening / curious / confused / understanding / challenging / responding + interjection policy |
+| Segmentation | `lib/student/segments.ts` | Only settled speech is evaluated; echo filter |
+| Orchestration | `lib/student/engine.ts` | `SessionEngine`: single-flight evaluation, one utterance at a time, failure-safe |
+| Speech analysis | `lib/student/speech.ts` | WPM, pauses, fillers, longest stretch, talk share, response latency |
+| Feedback | `lib/student/evidence.ts`, `app/api/feedback` | Timestamped evidence; LLM suggestions must cite it |
+| Persistence | `lib/history.ts` | localStorage, versioned records, migrates old saves |
+| UI | `components/` | Avatar (placeholder), StudentPanel, Session, Results, History |
 
-Scoring: met = 1, partial = ½, missing = 0. The rubric is the same no matter how much time you pick.
+### The student knowledge model
+- **Initial mastery** = level base − difficulty penalty − 4 per prerequisite ± a small stable jitter. A kindergartner starts near 0–8 and an expert around 45–62. Each level also starts with a different number of misconceptions.
+- **Updates.** For each stable teacher segment (about 25 words, or a 2.5s pause), the LLM reports per concept: explained or just mentioned, correctness, clarity, level fit, example used, and a **verbatim quote**. Code then applies it:
+  - Proposals whose quote isn't in the segment are rejected.
+  - A mention changes nothing. An incorrect explanation lowers mastery slightly.
+  - Otherwise `gain = 28 × correctness × clarity × level-fit × example bonus × prerequisite factor × learn rate × (100 − mastery)/100`, which gives diminishing returns.
+  - An active misconception caps the concept at 55, and a partially addressed one at 75.
+  - Segment IDs are tracked, so the same segment never counts twice. A failed or missing response leaves the state untouched.
+- **Misconceptions** change status only on an explicit, quote-backed `corrected` / `partially_corrected` / `reinforced` judgment, never because the concept was mentioned.
 
-## Where things live
+### How questions are chosen
+`scoreCandidates()` scores every candidate. In priority order:
+- An on-topic misconception the student hasn't voiced yet (2.2)
+- A follow-up to a partly answered question (1.7)
+- A prerequisite gap: the teacher is building on something below 35 mastery (1.4+)
+- A concept that was mentioned but not explained (1.1)
+- A concept that was explained but isn't landing (0.6)
+- Low mastery in general
+- An advanced-level challenge (0.9)
+- Curiosity about the next concept (0.5)
 
+Concepts asked about in the last two questions are penalized, and anything already answered well is excluded. A small seeded random bonus adds natural variety. The question type depends on the level: a kindergartner asks what a word means, a high schooler asks how two concepts relate, and an expert challenges. The policy never asks while the student is talking, during a per-level cooldown, or while waiting for an answer. Confusion shortens the cooldown, and a 75s monologue lowers the threshold for checking in.
+
+### How speech is measured
+Each final recognition result is timestamped on the client: start is when the recognizer first reported it, end is when it became final. Student lines are timed from text-to-speech start and end events. WPM uses only utterances with a measured duration (typed text is excluded), and is shown only after 15s or more of timed speech. Other measures: pauses of 4s or more, runs of continuous speech (gaps under 4s with no student turn between), response latency after student questions, and filler words (um/uh/you know/I mean, plus "like" only in filler positions, so "it's like a kitchen" doesn't count). All of these are approximate. Chrome often drops "um", so filler counts are a lower bound.
+
+## Testing
+
+```bash
+npm test                    # 43 unit tests for all deterministic logic (node:test)
+npm run typecheck           # tsc --strict on the TypeScript modules
+bash tests/routes/run.sh    # real API route handlers with stubbed Next + SDK
+bash tests/browser/run.sh   # real UI in headless Chromium, simulated mic/TTS/API
 ```
-lib/prompts.js     ← ALL three prompts + their JSON schemas (tune here)
-lib/levels.js      ← the 5 learner levels (what they understand, what loses them, rubric size)
-lib/verify.js      ← quote checking + dropping unsourced rubric items
-lib/grading.js     ← turns the model's grading into the final, code-checked result
-lib/claude.js      ← API calls (forced tool use = guaranteed JSON); model names
-app/api/*          ← the three endpoints
-components/        ← the screens: Setup, Overview, Session, Results, History
-lib/history.js     ← saving/loading past sessions (localStorage)
-app/globals.css    ← all styling
-```
 
-Models: Sonnet for prep and grading, Haiku for the live note-taker. Change them in `.env.local` with `SMART_MODEL` / `FAST_MODEL`.
+The browser test walks a full session: start, teach, student voices a misconception, mic pauses so its voice isn't transcribed, the teacher corrects it, the misconception resolves, end, evidence-cited feedback, reload, history restore.
 
-## Splitting the work
+### Manual test script
+1. Topic **Photosynthesis**, level **Middle schooler**, 2 min. Optionally upload `samples/photosynthesis_notes.pdf`. Start.
+2. Say: "Plants make their own food from sunlight." The student should push back with a misconception, something like soil or dirt. Open **Student understanding** to see it.
+3. Correct it directly, for example "No, the soil only gives water and minerals; the food is sugar made in the leaves." The misconception should show **resolved** and mastery should rise.
+4. Use a term like "thylakoid" without defining it. The student should look confused or ask what it means.
+5. Talk for more than 90s without pausing, then end. Feedback should cite the moment with a timestamp, and **How you spoke** should show the long stretch.
 
-- **Prompts person:** `lib/prompts.js` + `lib/levels.js`. Run the same lesson at different levels and tune until the notes and grades feel fair.
-- **Frontend person:** `components/` + `globals.css`.
-- **Demo person:** pick the sample material, write the script, deploy to Vercel, and test on the actual demo laptop and mic.
+## Customizing the avatar
+`components/Avatar.js` is a placeholder. Keep its props (`behavior`, `speaking`, `thinking`, `level`) and swap the SVG for images, Lottie or Rive. The expressions live in the "Avatar" block of `app/globals.css`.
 
-## Known limits
-
-- Upload types: PDF, TXT, MD, images. Export slides or Word docs to PDF first. Keep uploads under 3 MB total (Vercel's request limit).
-- Quote checking runs on text sources only. For PDFs, the source quotes come from the model unchecked (the grading-side transcript checks still apply).
-- Speech recognition is Chrome-first and English (`rec.lang` in `SessionScreen.js`).
-- **History** (graded sessions: overview, rubric, feedback, notes, transcript) is saved in the browser's localStorage, so it survives a refresh but stays on that one browser. Uploaded files aren't saved, so to teach an old topic again after a refresh, re-upload it.
-
-## Stretch goals
-
-- Learner asks one question at the end about its biggest "lost me" moment
-- Extract text from PDFs in the browser (pdf.js) so PDF quotes can be checked too
+## Limitations
+- Mastery numbers are a **simulation**, not a measurement of learning.
+- Speech recognition is Chrome-first and English. Timing comes from recognition events, not raw audio.
+- The quality of observations and questions depends on the LLM. The code guards structure and evidence, not judgment.
+- History lives in one browser's localStorage, and uploaded files aren't saved.

@@ -2,30 +2,31 @@
 
 import { useEffect, useRef, useState } from 'react';
 import SetupScreen from '../components/SetupScreen';
-import OverviewScreen from '../components/OverviewScreen';
 import SessionScreen from '../components/SessionScreen';
 import ResultsScreen from '../components/ResultsScreen';
 import HistoryScreen from '../components/HistoryScreen';
 import { postJSON } from '../lib/client';
-import { getLevel } from '../lib/levels';
-import { loadHistory, saveHistory, attemptsFor, MAX_HISTORY } from '../lib/history';
+import { getLevel } from '../lib/levels.ts';
+import { loadHistory, saveHistory, attemptNumber, compactEvents, MAX_HISTORY } from '../lib/history.ts';
 
-// Screens: setup -> preparing -> overview -> session -> grading -> results
-//          history -> history-detail (reachable from anywhere except mid-session)
-const BUSY = ['preparing', 'session', 'grading'];
+// Screens: setup -> session -> feedback -> results
+//          history -> history-detail (reachable whenever you're not mid-session)
+const BUSY = ['session', 'feedback'];
 
 export default function Home() {
   const [screen, setScreen] = useState('setup');
-  const [setup, setSetup] = useState(null); // { sources, levelId, timeLimitSec, focus }
-  const [plan, setPlan] = useState(null); // the prepared plan, with plan.id
-  const [session, setSession] = useState(null); // last session waiting to be graded
-  const [currentId, setCurrentId] = useState(null); // history id of the latest result
+  const [setup, setSetup] = useState(null); // { sources, topic, levelId, timeLimitSec, focus, topicId }
+  const [extraction, setExtraction] = useState(null); // concepts + misconceptions for this topic/level
+  const [pending, setPending] = useState(null); // finished session waiting for feedback
+  const [currentId, setCurrentId] = useState(null);
   const [history, setHistory] = useState([]); // newest first
   const [saveFailed, setSaveFailed] = useState(false);
   const [viewingId, setViewingId] = useState(null);
   const [returnTo, setReturnTo] = useState('setup');
   const [error, setError] = useState('');
-  const historyRef = useRef([]); // always-current copy for async handlers
+  const historyRef = useRef([]);
+  const setupRef = useRef(null);
+  setupRef.current = setup;
 
   useEffect(() => {
     historyRef.current = loadHistory();
@@ -39,45 +40,56 @@ export default function Home() {
     setSaveFailed(!saveHistory(next));
   }
 
-  async function prepare(s) {
+  function startNewTopic(s) {
     setError('');
-    setSetup(s);
-    setScreen('preparing');
-    try {
-      const p = await postJSON('/api/prepare', { sources: s.sources, levelId: s.levelId, focus: s.focus });
-      setPlan({ ...p, id: `plan-${Date.now()}` });
-      setCurrentId(null);
-      setScreen('overview');
-    } catch (e) {
-      setError(e.message);
-      setScreen('setup');
-    }
+    setSetup({ ...s, topicId: `topic-${Date.now()}` });
+    setExtraction(null);
+    setCurrentId(null);
+    setScreen('session');
   }
 
-  async function gradeSession(sess) {
+  async function getFeedback(sess) {
+    const s = setupRef.current;
     setError('');
-    setSession(sess);
-    setScreen('grading');
+    setPending(sess);
+    setScreen('feedback');
     try {
-      const grade = await postJSON('/api/grade', {
-        sources: setup.sources,
-        levelId: setup.levelId,
-        plan,
-        transcript: sess.transcript,
-        notes: sess.notes,
+      const fb = await postJSON('/api/feedback', {
+        levelId: s.levelId,
+        topicTitle: sess.extraction?.topicTitle || s.topic || 'Your lesson',
+        initial: sess.initialModel,
+        final: sess.finalModel,
+        events: sess.events,
+        utterances: sess.utterances,
+        sources: s.sources,
       });
-      const entry = {
+      const record = {
+        version: 3,
         id: `s-${Date.now()}`,
         createdAt: new Date().toISOString(),
-        planId: plan.id,
-        levelId: setup.levelId,
-        timeLimitSec: setup.timeLimitSec,
-        plan,
-        session: sess,
-        grade,
+        topicId: s.topicId,
+        topicTitle: sess.extraction?.topicTitle || s.topic || 'Your lesson',
+        levelId: s.levelId,
+        timeLimitSec: s.timeLimitSec,
+        timeUsedSec: sess.timeUsedSec,
+        extraction: sess.extraction,
+        initialModel: sess.initialModel,
+        finalModel: sess.finalModel,
+        events: compactEvents(sess.events),
+        utterances: sess.utterances,
+        metrics: fb.metrics,
+        learning: fb.learning,
+        feedback: {
+          summary: fb.summary,
+          suggestions: fb.suggestions,
+          strengths: fb.strengths,
+          outside_knowledge: fb.outside_knowledge,
+          evidence: fb.evidence,
+          usedFallback: fb.usedFallback,
+        },
       };
-      updateHistory((h) => [entry, ...h].slice(0, MAX_HISTORY));
-      setCurrentId(entry.id);
+      updateHistory((h) => [record, ...h].slice(0, MAX_HISTORY));
+      setCurrentId(record.id);
       setScreen('results');
     } catch (e) {
       setError(e.message);
@@ -114,58 +126,45 @@ export default function Home() {
         )}
       </header>
 
-      {screen === 'setup' && <SetupScreen initial={setup} error={error} onSubmit={prepare} />}
-
-      {screen === 'preparing' && (
-        <Loading title="Reading your material…" subtitle="Building the overview and the rubric your learner will be graded on." />
-      )}
-
-      {screen === 'overview' && (
-        <OverviewScreen
-          plan={plan}
-          level={level}
-          timeLimitSec={setup.timeLimitSec}
-          onBack={() => setScreen('setup')}
-          onStart={() => setScreen('session')}
-          onBackToResults={current ? () => setScreen('results') : null}
-        />
-      )}
+      {screen === 'setup' && <SetupScreen initial={setup} error={error} onSubmit={startNewTopic} />}
 
       {screen === 'session' && (
         <SessionScreen
-          plan={plan}
+          setup={setup}
           level={level}
-          timeLimitSec={setup.timeLimitSec}
-          onFinish={gradeSession}
-          onExit={() => setScreen('overview')}
+          extraction={extraction}
+          onExtraction={setExtraction}
+          onFinish={getFeedback}
+          onExit={() => setScreen(current ? 'results' : 'setup')}
         />
       )}
 
-      {screen === 'grading' &&
+      {screen === 'feedback' &&
         (error ? (
           <div className="card center">
-            <h2>Grading failed</h2>
+            <h2>Couldn't get feedback</h2>
             <p className="error">{error}</p>
             <div className="row center-row">
-              <button className="btn" onClick={() => gradeSession(session)}>Retry grading</button>
+              <button className="btn" onClick={() => getFeedback(pending)}>Retry</button>
               <button className="btn ghost" onClick={() => { setError(''); setScreen('session'); }}>Teach again</button>
             </div>
           </div>
         ) : (
-          <Loading title="Your learner is handing in their notes…" subtitle="Checking the notes against the rubric." />
+          <div className="card center">
+            <div className="spinner" />
+            <h2>Reviewing your lesson…</h2>
+            <p className="muted">Looking at what your student learned and the moments that mattered.</p>
+          </div>
         ))}
 
       {screen === 'results' && current && (
         <ResultsScreen
           entry={current}
-          attempts={attemptsFor(history, current)}
+          attemptNumber={attemptNumber(history, current)}
           footer={
             <div className="row space-between">
-              <div className="row">
-                <button className="btn ghost" onClick={() => setScreen('setup')}>New topic</button>
-                <button className="btn ghost" onClick={() => setScreen('overview')}>Review rubric</button>
-              </div>
-              <button className="btn big" onClick={() => setScreen('session')}>↻ Try again</button>
+              <button className="btn ghost" onClick={() => setScreen('setup')}>New topic</button>
+              <button className="btn big" onClick={() => setScreen('session')}>↻ Teach it again</button>
             </div>
           }
         />
@@ -185,36 +184,21 @@ export default function Home() {
       {screen === 'history-detail' && viewing && (
         <ResultsScreen
           entry={viewing}
-          attempts={attemptsFor(history, viewing)}
+          attemptNumber={attemptNumber(history, viewing)}
           isHistory
           footer={
             <div className="row space-between">
               <div className="row">
                 <button className="btn ghost" onClick={() => setScreen('history')}>← Back to history</button>
-                <button
-                  className="btn ghost"
-                  onClick={() => window.confirm('Delete this session?') && deleteEntry(viewing.id)}
-                >
-                  Delete
-                </button>
+                <button className="btn ghost" onClick={() => window.confirm('Delete this session?') && deleteEntry(viewing.id)}>Delete</button>
               </div>
-              {plan && viewing.planId === plan.id && (
-                <button className="btn big" onClick={() => setScreen('session')}>↻ Teach this again</button>
+              {setup && viewing.topicId === setup.topicId && (
+                <button className="btn big" onClick={() => setScreen('session')}>↻ Teach it again</button>
               )}
             </div>
           }
         />
       )}
     </main>
-  );
-}
-
-function Loading({ title, subtitle }) {
-  return (
-    <div className="card center">
-      <div className="spinner" />
-      <h2>{title}</h2>
-      <p className="muted">{subtitle}</p>
-    </div>
   );
 }

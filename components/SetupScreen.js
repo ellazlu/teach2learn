@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { LEVELS } from '../lib/levels';
+import { LEVELS } from '../lib/levels.ts';
 
 const TIME_PRESETS = [1, 2, 3, 5, 10]; // minutes
 const MAX_TOTAL_BYTES = 3 * 1024 * 1024; // keeps requests under Vercel's 4.5 MB body limit
@@ -45,6 +45,7 @@ export default function SetupScreen({ initial, error, onSubmit }) {
 
   const [files, setFiles] = useState(initialFiles);
   const [pasted, setPasted] = useState(initialPaste);
+  const [topic, setTopic] = useState(initial?.topic || '');
   const [focus, setFocus] = useState(initial?.focus || '');
   const [levelId, setLevelId] = useState(initial?.levelId || 'middle');
   const [minutes, setMinutes] = useState(initialMin);
@@ -65,21 +66,30 @@ export default function SetupScreen({ initial, error, onSubmit }) {
 
   const totalBytes = files.reduce((n, f) => n + f.size, 0) + pasted.length;
   const effectiveMin = customMin ? Number(customMin) : minutes;
-  const canSubmit = (files.length > 0 || pasted.trim()) && effectiveMin > 0 && totalBytes <= MAX_TOTAL_BYTES;
+  const canSubmit = (topic.trim() || files.length > 0 || pasted.trim()) && effectiveMin > 0 && totalBytes <= MAX_TOTAL_BYTES;
 
   function submit(e) {
     e.preventDefault();
     if (!canSubmit) return;
     const sources = [...files];
     if (pasted.trim()) sources.push({ name: 'Pasted text', kind: 'text', data: pasted.trim(), size: pasted.length });
-    onSubmit({ sources, levelId, focus, timeLimitSec: Math.round(effectiveMin * 60) });
+    onSubmit({ sources, topic: topic.trim(), levelId, focus, timeLimitSec: Math.round(effectiveMin * 60) });
   }
 
   return (
     <form className="stack" onSubmit={submit}>
       <section className="card">
         <h2>1. What are you teaching?</h2>
-        <p className="muted">Upload your class material. Everything the learner is graded on comes only from these files.</p>
+        <input
+          type="text"
+          className="topic-input"
+          placeholder="Topic, e.g. “Photosynthesis” or “Newton's laws”"
+          value={topic}
+          onChange={(e) => setTopic(e.target.value)}
+        />
+        <p className="muted small">
+          Optional: add your notes. Then your student's concepts, questions, and your feedback stick to what's in them.
+        </p>
         <label className="dropzone">
           <input type="file" multiple accept=".pdf,.txt,.md,.markdown,image/*" onChange={addFiles} />
           <span>📄 Click to add PDFs, text files, or images</span>
@@ -111,7 +121,7 @@ export default function SetupScreen({ initial, error, onSubmit }) {
 
       <section className="card">
         <h2>2. Who are you teaching?</h2>
-        <p className="muted">This sets how deep you need to go, and when your learner gets lost.</p>
+        <p className="muted">This sets the kind of questions they'll interrupt you with.</p>
         <div className="level-grid">
           {LEVELS.map((l) => (
             <button
@@ -154,7 +164,7 @@ export default function SetupScreen({ initial, error, onSubmit }) {
 
       {(error || localError) && <p className="error">{error || localError}</p>}
 
-      <button className="btn big" type="submit" disabled={!canSubmit}>Prepare my session →</button>
+      <button className="btn big" type="submit" disabled={!canSubmit}>🎙️ Start session →</button>
     </form>
   );
 }
