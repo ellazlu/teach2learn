@@ -8,6 +8,7 @@
 
 import type {
   ConceptState,
+  Demonstration,
   Evidence,
   EvaluationProposal,
   Extraction,
@@ -17,13 +18,15 @@ import type {
   LevelId,
   Segment,
   StudentModel,
+  Verification,
 } from './types.ts';
 import { getLevel, type Level } from '../levels.ts';
 import { normalize, quoteAppearsIn } from '../verify.ts';
 import { masteryCapFor, nextMisconceptionStatus, selectMisconceptions } from './misconceptions.ts';
 
-export const MAX_GAIN = 28; // mastery points for a perfect explanation of an unknown concept
-const MAX_CONCEPTS = 10;
+export const MAX_GAIN = 35; // mastery points for a perfect explanation of an unknown concept
+// ~2-minute sessions: focus on the 1-3 key concepts, not the whole subject.
+export const MAX_CONCEPTS = 3;
 
 const clamp = (n: number, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, n));
 
@@ -104,6 +107,8 @@ export function initStudentModel(extraction: Extraction, levelId: LevelId): Stud
       explainCount: 0,
       evidence: [],
       openGaps: [],
+      verification: 'not_verified',
+      demonstrations: [],
     };
   });
   const misconceptions = selectMisconceptions(extraction.misconceptions, extraction.concepts, level.params.misconceptionCount);
@@ -150,7 +155,7 @@ export function prerequisiteFactor(concept: ConceptState, model: StudentModel): 
     .map((id) => model.concepts.find((c) => c.id === id)?.mastery)
     .filter((m): m is number => typeof m === 'number');
   if (!ms.length) return 1;
-  return 0.45 + 0.55 * Math.min(1, Math.min(...ms) / 50);
+  return 0.6 + 0.4 * Math.min(1, Math.min(...ms) / 50);
 }
 
 const MAX_GAPS = 3;
@@ -320,6 +325,58 @@ export function applyEvaluation(
   if (chk?.happened && real(chk.quote)) events.push({ type: 'checked_understanding', segmentId: sid, at, quote: chk.quote });
 
   return { model: next, events };
+}
+
+// ---- Learning verification -----------------------------------------------------
+//
+// Being explained is not the same as being understood. The student shows its
+// understanding (explains back / applies to a new example / answers the
+// teacher's question); a separate check grades that against the material; these
+// rules decide the status. "demonstrated" requires the teacher to have actually
+// explained the concept, so prior knowledge can't count as teaching success.
+
+export function applyVerification(model: StudentModel, conceptId: string, demo: Demonstration): ApplyResult {
+  const c0 = model.concepts.find((c) => c.id === conceptId);
+  if (!c0 || !demo || !['demonstrated', 'partial', 'not_demonstrated'].includes(demo.verdict)) return { model, events: [] };
+  const next: StudentModel = structuredClone(model);
+  const c = next.concepts.find((x) => x.id === conceptId)!;
+  c.demonstrations = [...(c.demonstrations || []), demo];
+  const before = c.verification || 'not_verified';
+  let status: Verification = before;
+  if (demo.verdict === 'demonstrated') status = c.explained ? 'demonstrated' : 'partial';
+  else if (demo.verdict === 'partial') status = before === 'demonstrated' ? 'demonstrated' : 'partial';
+  // A failed attempt never upgrades; it also doesn't erase an earlier success.
+  c.verification = status;
+  const events: KnowledgeEvent[] = [
+    { type: 'demonstration', segmentId: '', at: demo.at, conceptId, mode: demo.mode, verdict: demo.verdict, text: demo.text, note: demo.note, status },
+  ];
+  return { model: next, events };
+}
+
+export type ConceptStatusLabel = 'Demonstrated understanding' | 'Partially understood' | 'Not yet verified';
+
+export interface ConceptSummary {
+  conceptId: string;
+  name: string;
+  status: ConceptStatusLabel;
+  note: string;
+}
+
+export function conceptSummary(model: StudentModel): ConceptSummary[] {
+  return model.concepts.map((c) => {
+    const v = c.verification || 'not_verified';
+    const last = (c.demonstrations || [])[(c.demonstrations || []).length - 1];
+    if (v === 'demonstrated') return { conceptId: c.id, name: c.name, status: 'Demonstrated understanding', note: last?.note || '' };
+    if (v === 'partial') return { conceptId: c.id, name: c.name, status: 'Partially understood', note: last?.note || '' };
+    const note = last
+      ? `The student tried to explain it but got it wrong: ${last.note}`
+      : c.explained
+        ? "You explained it, but the student hasn't shown it back yet."
+        : c.mentioned
+          ? 'Mentioned, but not explained.'
+          : 'Not covered.';
+    return { conceptId: c.id, name: c.name, status: 'Not yet verified', note };
+  });
 }
 
 // ---- Summaries --------------------------------------------------------------------

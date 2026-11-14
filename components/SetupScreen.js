@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { LEVELS } from '../lib/levels.ts';
 
-const TIME_PRESETS = [1, 2, 3, 5, 10]; // minutes
+const TIME_PRESETS = [1, 2, 3, 5]; // minutes
 const MAX_TOTAL_BYTES = 3 * 1024 * 1024; // keeps requests under Vercel's 4.5 MB body limit
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 
@@ -51,6 +51,7 @@ export default function SetupScreen({ initial, error, onSubmit }) {
   const [minutes, setMinutes] = useState(initialMin);
   const [customMin, setCustomMin] = useState(TIME_PRESETS.includes(initialMin) ? '' : String(initialMin));
   const [localError, setLocalError] = useState('');
+  const [notesOpen, setNotesOpen] = useState(false);
 
   async function addFiles(e) {
     setLocalError('');
@@ -76,95 +77,74 @@ export default function SetupScreen({ initial, error, onSubmit }) {
     onSubmit({ sources, topic: topic.trim(), levelId, focus, timeLimitSec: Math.round(effectiveMin * 60) });
   }
 
-  return (
-    <form className="stack" onSubmit={submit}>
-      <section className="card">
-        <h2>1. What are you teaching?</h2>
-        <input
-          type="text"
-          className="topic-input"
-          placeholder="Topic, e.g. “Photosynthesis” or “Newton's laws”"
-          value={topic}
-          onChange={(e) => setTopic(e.target.value)}
-        />
-        <p className="muted small">
-          Optional: add your notes. Then your student's concepts, questions, and your feedback stick to what's in them.
-        </p>
-        <label className="dropzone">
-          <input type="file" multiple accept=".pdf,.txt,.md,.markdown,image/*" onChange={addFiles} />
-          <span>📄 Click to add PDFs, text files, or images</span>
-        </label>
-        {files.length > 0 && (
-          <ul className="file-list">
-            {files.map((f) => (
-              <li key={f.name}>
-                <span>{f.name}</span>
-                <button type="button" className="link" onClick={() => setFiles(files.filter((x) => x !== f))}>remove</button>
-              </li>
-            ))}
-          </ul>
-        )}
-        <textarea
-          placeholder="…or paste notes / text here"
-          rows={4}
-          value={pasted}
-          onChange={(e) => setPasted(e.target.value)}
-        />
-        <input
-          type="text"
-          placeholder="Optional focus, e.g. “only section 2” or “skip the history part”"
-          value={focus}
-          onChange={(e) => setFocus(e.target.value)}
-        />
-        {totalBytes > MAX_TOTAL_BYTES && <p className="error">Files are over 3 MB total. Remove some or use smaller files.</p>}
-      </section>
+  const showNotes = notesOpen || files.length > 0 || pasted.trim();
 
-      <section className="card">
-        <h2>2. Who are you teaching?</h2>
-        <p className="muted">This sets the kind of questions they'll interrupt you with.</p>
-        <div className="level-grid">
+  return (
+    <form className="setup" onSubmit={submit}>
+      <header className="setup-head">
+        <h1>Teach it to learn it.</h1>
+        <p className="muted">Explain a topic out loud to a simulated student. It asks questions, holds a few misconceptions, and has to show it understood. About two minutes is enough.</p>
+      </header>
+
+      <div className="field">
+        <label className="label" htmlFor="topic">Topic</label>
+        <input id="topic" className="input topic-input" placeholder="e.g. Photosynthesis, Newton's first law" value={topic} onChange={(e) => setTopic(e.target.value)} autoFocus />
+        {!showNotes ? (
+          <button type="button" className="btn-text small" onClick={() => setNotesOpen(true)}>+ Add notes or slides (optional)</button>
+        ) : (
+          <div className="notes">
+            <p className="muted small">The student's concepts and your feedback will stick to what's in your notes.</p>
+            <label className="file-pick">
+              <input type="file" multiple accept=".pdf,.txt,.md,.markdown,image/*" onChange={addFiles} />
+              <span>Choose files</span>
+              <span className="muted small">PDF, TXT, MD or images · up to 3 MB</span>
+            </label>
+            {files.length > 0 && (
+              <ul className="file-list">
+                {files.map((f) => (
+                  <li key={f.name}>
+                    <span>{f.name}</span>
+                    <button type="button" className="btn-text small" onClick={() => setFiles(files.filter((x) => x !== f))}>Remove</button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <textarea className="input" placeholder="…or paste notes" rows={3} value={pasted} onChange={(e) => setPasted(e.target.value)} />
+            <input className="input" placeholder="Focus (optional), e.g. “only section 2”" value={focus} onChange={(e) => setFocus(e.target.value)} />
+            {totalBytes > MAX_TOTAL_BYTES && <p className="error small">Files are over 3 MB total.</p>}
+          </div>
+        )}
+      </div>
+
+      <div className="field">
+        <span className="label" id="level-label">Student</span>
+        <div className="segmented" role="radiogroup" aria-labelledby="level-label">
           {LEVELS.map((l) => (
-            <button
-              type="button"
-              key={l.id}
-              className={`level ${levelId === l.id ? 'selected' : ''}`}
-              onClick={() => setLevelId(l.id)}
-            >
-              <span className="emoji">{l.emoji}</span>
-              <span>{l.label}</span>
+            <button type="button" role="radio" aria-checked={levelId === l.id} key={l.id} className={levelId === l.id ? 'on' : ''} onClick={() => setLevelId(l.id)}>
+              {l.label}
             </button>
           ))}
         </div>
-      </section>
+      </div>
 
-      <section className="card">
-        <h2>3. How long do you get?</h2>
-        <div className="row">
+      <div className="field">
+        <span className="label" id="time-label">Time</span>
+        <div className="segmented compact" role="radiogroup" aria-labelledby="time-label">
           {TIME_PRESETS.map((m) => (
-            <button
-              type="button"
-              key={m}
-              className={`chip ${!customMin && minutes === m ? 'selected' : ''}`}
-              onClick={() => { setMinutes(m); setCustomMin(''); }}
-            >
+            <button type="button" role="radio" aria-checked={!customMin && minutes === m} key={m} className={!customMin && minutes === m ? 'on' : ''} onClick={() => { setMinutes(m); setCustomMin(''); }}>
               {m} min
             </button>
           ))}
-          <input
-            className="custom-time"
-            type="number"
-            min="0.5"
-            step="0.5"
-            placeholder="Custom min"
-            value={customMin}
-            onChange={(e) => setCustomMin(e.target.value)}
-          />
+          <input className="custom-time" type="number" min="0.5" step="0.5" placeholder="Other" aria-label="Custom minutes" value={customMin} onChange={(e) => setCustomMin(e.target.value)} />
         </div>
-      </section>
+      </div>
 
       {(error || localError) && <p className="error">{error || localError}</p>}
 
-      <button className="btn big" type="submit" disabled={!canSubmit}>🎙️ Start session →</button>
+      <div className="setup-actions">
+        <button className="btn primary large" type="submit" disabled={!canSubmit}>Start session</button>
+        <span className="muted small">Uses your microphone (Chrome works best). You can also type.</span>
+      </div>
     </form>
   );
 }

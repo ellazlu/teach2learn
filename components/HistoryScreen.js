@@ -4,56 +4,48 @@ import { formatTime } from '../lib/client';
 import { getLevel } from '../lib/levels.ts';
 import { attemptNumber } from '../lib/history.ts';
 
-function stats(e) {
-  if (e.version !== 3) return 'older session';
-  const learned = e.learning.learned.length;
-  const resolved = e.finalModel?.misconceptions.filter((m) => m.status === 'resolved').length || 0;
-  const total = e.finalModel?.misconceptions.length || 0;
-  return `learned ${learned} concept${learned === 1 ? '' : 's'} · ${resolved}/${total} misconceptions fixed`;
+function summary(e) {
+  if (e.version !== 4) return 'Earlier format';
+  const shown = e.concepts.filter((c) => c.status === 'Demonstrated understanding').length;
+  return `${shown} of ${e.concepts.length} concept${e.concepts.length === 1 ? '' : 's'} demonstrated`;
 }
 
 export default function HistoryScreen({ history, saveFailed, onOpen, onDelete, onClearAll, onBack }) {
   return (
-    <div className="stack">
-      <div className="row space-between">
-        <button className="btn ghost" onClick={onBack}>← Back</button>
-        {history.length > 0 && (
-          <button className="link" onClick={() => window.confirm('Delete all saved sessions?') && onClearAll()}>Clear all</button>
+    <div className="history">
+      <div className="page-head">
+        <button className="btn-text" onClick={onBack}>← Back</button>
+        <h1>History</h1>
+        {history.length > 0 ? (
+          <button className="btn-text" onClick={() => window.confirm('Delete all saved sessions?') && onClearAll()}>Clear all</button>
+        ) : (
+          <span />
         )}
       </div>
-
-      <section className="card">
-        <h2>🕘 Past sessions</h2>
-        <p className="muted">Saved in this browser. Open one to see your student's progress, the feedback, and the full conversation.</p>
-        {saveFailed && <p className="warning">Browser storage is full, so your oldest sessions weren't saved.</p>}
-
-        {history.length === 0 ? (
-          <p className="muted empty">No sessions yet. Finish a teaching session and it'll show up here.</p>
-        ) : (
-          <ul className="history-list">
-            {history.map((e) => {
-              const level = getLevel(e.levelId);
-              return (
-                <li key={e.id} className="history-item">
-                  <button className="history-open" onClick={() => onOpen(e.id)}>
-                    <span className="history-emoji">{level.emoji}</span>
-                    <span className="history-text">
-                      <strong>{e.topicTitle}</strong>
-                      <span className="muted small">
-                        {level.label} · attempt {attemptNumber(history, e)} · {formatTime(e.timeUsedSec)} · {stats(e)} ·{' '}
-                        {new Date(e.createdAt).toLocaleString()}
-                      </span>
-                    </span>
-                  </button>
-                  <button className="link" aria-label="Delete session" onClick={() => window.confirm('Delete this session?') && onDelete(e.id)}>
-                    delete
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
+      {saveFailed && <p className="notice">Browser storage is full, so the oldest sessions weren't saved.</p>}
+      {history.length === 0 ? (
+        <p className="muted">No sessions yet. Finished sessions are saved in this browser.</p>
+      ) : (
+        <ul className="history-list">
+          {history.map((e) => {
+            const level = getLevel(e.levelId);
+            return (
+              <li key={e.id}>
+                <button className="history-open" onClick={() => onOpen(e.id)}>
+                  <span className="h-title">{e.topicTitle}</span>
+                  <span className="h-meta">
+                    {level.label} · attempt {attemptNumber(history, e)} · {formatTime(e.timeUsedSec)} · {summary(e)}
+                  </span>
+                  <span className="h-date">{new Date(e.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
+                </button>
+                <button className="btn-text small" aria-label="Delete session" onClick={() => window.confirm('Delete this session?') && onDelete(e.id)}>
+                  Delete
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }

@@ -10,7 +10,6 @@ import { selectQuestion, scoreCandidates } from '../lib/student/questions.ts';
 import { specificity, fallbackLine } from '../lib/student/dialogue.ts';
 import { buildEvidence } from '../lib/student/evidence.ts';
 import { computeSpeechMetrics } from '../lib/student/speech.ts';
-import { SessionEngine } from '../lib/student/engine.ts';
 import { proposal } from './fixtures.ts';
 import type { Segment } from '../lib/student/types.ts';
 
@@ -92,33 +91,6 @@ test('the fallback line is the specific question itself', () => {
   assert.equal(fallbackLine('clarify', { focusQuestion: GAP, conceptName: 'Gravity and orbits' }), GAP);
   assert.equal(fallbackLine('define_term', { term: 'orbit' }), 'What does "orbit" mean?');
   assert.equal(fallbackLine('misconception', { belief: 'Heavier objects fall faster.' }), 'Wait, but I thought heavier objects fall faster?');
-});
-
-test('the engine sends the focus and anchors to the phrasing step', async () => {
-  let clock = 30;
-  const speakBodies: any[] = [];
-  const engine = new SessionEngine('high', {
-    now: () => clock,
-    seed: 1,
-    evaluate: async (b: any) =>
-      b.segment.includes('gravity')
-        ? proposal({ concepts: [{ concept_id: 's2', explained: true, correctness: 'partially_correct', clarity: 'somewhat_clear', level_fit: 'appropriate', used_example: false, quote: 'pulls the planets toward the sun', gap: GAP }] })
-        : proposal({ concepts: [{ concept_id: 's1', explained: true, correctness: 'correct', clarity: 'somewhat_clear', level_fit: 'appropriate', used_example: false, quote: 'the sun eight planets their moons', gap: '' }] }),
-    speak: async (b: any) => {
-      speakBodies.push(b);
-      return { text: "You said gravity pulls them in, so why don't they fall into the Sun?" };
-    },
-    say: async () => ({ start: clock, end: (clock += 3) }),
-  });
-  engine.setExtraction(SOLAR);
-  engine.onTeacherFinal('the solar system has the sun eight planets their moons and lots of asteroids and comets floating around out there', 5, 12);
-  for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0));
-  engine.onTeacherFinal('gravity is the force that pulls the planets toward the sun and that is what keeps them going around it all the time', 14, 22);
-  for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
-  assert.equal(speakBodies.length, 1);
-  assert.equal(speakBodies[0].intent, 'clarify');
-  assert.equal(speakBodies[0].details.focusQuestion, GAP);
-  assert.ok(speakBodies[0].anchors.includes(GAP));
 });
 
 test('open questions left at the end become timestamped feedback evidence', () => {

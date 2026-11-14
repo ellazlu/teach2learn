@@ -3,24 +3,21 @@
 // Uploaded files are never saved.
 
 import type { Extraction, KnowledgeEvent, LevelId, Segment, SpeechMetrics, StudentModel } from './student/types.ts';
-import type { LearningSummary } from './student/knowledge.ts';
-import type { EvidenceItem, Suggestion } from './student/evidence.ts';
+import type { ConceptSummary, LearningSummary } from './student/knowledge.ts';
+import type { EvidenceItem, FeedbackItem } from './student/evidence.ts';
 
-export const KEY = 'teach2learn-history-v3';
-export const LEGACY_KEYS = ['teach2learn-history-v1'];
+export const KEY = 'teach2learn-history-v4';
+export const LEGACY_KEYS = ['teach2learn-history-v3', 'teach2learn-history-v1'];
 export const MAX_HISTORY = 50;
 
-export interface Feedback {
-  summary: string;
-  suggestions: Suggestion[];
-  strengths: { point: string; evidence: EvidenceItem[] }[];
-  outside_knowledge: { term_or_idea: string; student_quote: string; correct: boolean; comment: string }[];
-  evidence: EvidenceItem[];
-  usedFallback: boolean;
+export interface Teaching {
+  went_well: FeedbackItem | null;
+  improve: FeedbackItem | null;
+  try_next: FeedbackItem | null;
 }
 
 export interface SessionRecord {
-  version: 3;
+  version: 4;
   id: string;
   createdAt: string;
   topicId: string;
@@ -35,10 +32,14 @@ export interface SessionRecord {
   utterances: Segment[];
   metrics: SpeechMetrics;
   learning: LearningSummary;
-  feedback: Feedback;
+  concepts: ConceptSummary[]; // student learning (verification), kept apart from...
+  teaching: Teaching; // ...teacher performance feedback
+  evidence: EvidenceItem[];
+  usedFallback: boolean;
+  latencies: number[]; // ms from end of teacher speech to student audio
 }
 
-// Sessions saved by the original rubric version of the app.
+// Sessions saved by earlier versions of the app (rubric era and v3), kept readable.
 export interface LegacyRecord {
   version: 1;
   id: string;
@@ -65,9 +66,26 @@ const LEVEL_IDS = ['kindergarten', 'middle', 'high', 'college', 'expert'];
 export function migrate(raw: any): AnyRecord | null {
   if (!raw || typeof raw !== 'object' || !raw.id || !raw.createdAt) return null;
   const levelId = (LEVEL_IDS.includes(raw.levelId) ? raw.levelId : 'middle') as LevelId;
-  if (raw.version === 3) {
-    if (!raw.feedback || !Array.isArray(raw.utterances)) return null;
+  if (raw.version === 4) {
+    if (!raw.teaching || !Array.isArray(raw.utterances)) return null;
     return { ...raw, levelId } as SessionRecord;
+  }
+  // v3: knowledge-model sessions with long-form suggestions.
+  if (raw.version === 3 && raw.feedback && Array.isArray(raw.utterances)) {
+    return {
+      version: 1,
+      id: String(raw.id),
+      createdAt: String(raw.createdAt),
+      topicId: String(raw.topicId || raw.id),
+      topicTitle: String(raw.topicTitle || 'Untitled lesson'),
+      levelId,
+      timeLimitSec: Number(raw.timeLimitSec) || 0,
+      timeUsedSec: Number(raw.timeUsedSec) || 0,
+      transcript: raw.utterances.map((u: any) => `${u.speaker === 'student' ? 'Student' : 'You'}: ${u.text}`).join('\n'),
+      summary: String(raw.feedback.summary || ''),
+      suggestions: (raw.feedback.suggestions || []).map((x: any) => `${x.title}: ${x.detail}`),
+      scorePercent: null,
+    };
   }
   // Already-migrated legacy record (saved back under the current key).
   if (raw.version === 1 && Array.isArray(raw.suggestions) && 'transcript' in raw) return { ...raw, levelId } as LegacyRecord;

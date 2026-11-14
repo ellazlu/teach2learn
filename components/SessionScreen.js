@@ -6,9 +6,27 @@ import StudentPanel from './StudentPanel';
 import { formatTime, postJSON } from '../lib/client';
 import { SessionEngine } from '../lib/student/engine.ts';
 import { fmt } from '../lib/student/speech.ts';
+import { createPlayer } from '../lib/voice';
 
-// The live session. Browser plumbing only: microphone (Web Speech API),
-// text-to-speech, timer. All student logic lives in SessionEngine.
+// Streams the student's reply text; calls onText for each chunk.
+async function streamReply(body, onText, signal) {
+  const res = await fetch('/api/reply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Reply failed (${res.status})`);
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let full = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const t = dec.decode(value, { stream: true });
+    full += t;
+    onText(t);
+  }
+  return full;
+}
+
+// The live session. Browser plumbing only (mic, audio, timer); all student
+// logic lives in SessionEngine.
 export default function SessionScreen({ setup, level, extraction, onExtraction, onFinish, onExit }) {
   const timeLimitSec = setup.timeLimitSec;
 
@@ -16,35 +34,30 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
   const [phase, setPhase] = useState('live'); // live | finishing
   const [remaining, setRemaining] = useState(timeLimitSec);
   const [interim, setInterim] = useState('');
-  const [bubble, setBubble] = useState(null); // { text, live }
   const [micState, setMicState] = useState('off'); // off | on | unsupported | blocked
-  const [voiceOn, setVoiceOn] = useState(true);
   const [questionsOn, setQuestionsOn] = useState(true);
   const [extractState, setExtractState] = useState(extraction ? 'ready' : 'loading');
   const [extractError, setExtractError] = useState('');
+  const [voiceNote, setVoiceNote] = useState('');
   const [typed, setTyped] = useState('');
 
   const engineRef = useRef(null);
+  const playerRef = useRef(null);
   const recRef = useRef(null);
   const micOnRef = useRef(false);
-  const listeningRef = useRef(false); // session live; mic should run
-  const pausedRef = useRef(false); // student is speaking; mic + timer paused
+  const listeningRef = useRef(false);
+  const studentTalkingRef = useRef(false); // mic results are ignored while true
   const pendingStopRef = useRef(null);
-  const firstSeenRef = useRef(new Map()); // result index -> time first heard
+  const firstSeenRef = useRef(new Map());
   const interimRef = useRef('');
   const t0Ref = useRef(0);
   const pausedTotalRef = useRef(0);
   const pausedSinceRef = useRef(null);
   const finishingRef = useRef(false);
-  const voiceOnRef = useRef(true);
   const timersRef = useRef({});
-  const cancelSpeechRef = useRef(null);
-  const ttsActiveRef = useRef(false); // the student's voice is playing right now
   const convoRef = useRef(null);
 
-  // Seconds since the session started (wall clock): used for all timestamps.
   const now = () => (performance.now() - t0Ref.current) / 1000;
-  // Teaching time: excludes the time the student spends talking.
   const teachingElapsed = () => {
     const pausing = pausedSinceRef.current ? performance.now() - pausedSinceRef.current : 0;
     return (performance.now() - t0Ref.current - pausedTotalRef.current - pausing) / 1000;
@@ -62,11 +75,22 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
 
   function start() {
     t0Ref.current = performance.now();
+    const player = createPlayer({ level, now, onError: (m) => setVoiceNote(`Natural voice unavailable (${m}); using the browser voice.`) });
+    playerRef.current = player;
+    let gate = Promise.resolve();
     const engine = new SessionEngine(level.id, {
       evaluate: (body) => postJSON('/api/evaluate', body),
-      speak: (body) => postJSON('/api/speak', body),
-      say,
+      verify: (body) => postJSON('/api/verify', body),
+      reply: streamReply,
+      voice: {
+        begin: () => (gate = pauseMicForStudent()),
+        sentence: (text) => player.sentence(text, gate),
+        end: resumeMicAfterStudent,
+        cancel: () => player.cancel(),
+      },
       now,
+      teachingNow: teachingElapsed,
+      timeLimitSec,
       onChange: setSnap,
     });
     engineRef.current = engine;
@@ -74,19 +98,14 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
     if (extraction) engine.setExtraction(extraction);
     else loadExtraction();
     startMic();
-    timersRef.current.tick = setInterval(tick, 250);
+    timersRef.current.tick = setInterval(tick, 100);
   }
 
   async function loadExtraction() {
     setExtractState('loading');
     setExtractError('');
     try {
-      const ext = await postJSON('/api/prepare', {
-        sources: setup.sources,
-        topic: setup.topic,
-        levelId: level.id,
-        focus: setup.focus,
-      });
+      const ext = await postJSON('/api/prepare', { sources: setup.sources, topic: setup.topic, levelId: level.id, focus: setup.focus });
       onExtraction(ext);
       engineRef.current?.setExtraction(ext);
       setExtractState('ready');
@@ -106,7 +125,7 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
     engineRef.current?.tick();
   }
 
-  // ---- Microphone -------------------------------------------------------------
+  // ---- Microphone -----------------------------------------------------------------
 
   function startMic() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -119,20 +138,17 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
     rec.interimResults = true;
     rec.lang = 'en-US';
     rec.onresult = (e) => {
-      if (recRef.current !== rec || ttsActiveRef.current) return;
+      if (recRef.current !== rec || studentTalkingRef.current) return;
       let live = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const r = e.results[i];
         if (!firstSeenRef.current.has(i)) firstSeenRef.current.set(i, now());
-        if (r.isFinal) {
-          engineRef.current?.onTeacherFinal(r[0].transcript, firstSeenRef.current.get(i), now());
-          setBubble((b) => (b && !b.live ? null : b)); // teacher is answering
-        } else {
-          live += r[0].transcript;
-        }
+        if (r.isFinal) engineRef.current?.onTeacherFinal(r[0].transcript, firstSeenRef.current.get(i), now());
+        else live += r[0].transcript;
       }
       interimRef.current = live;
       setInterim(live);
+      if (live.trim()) engineRef.current?.onTeacherInterim();
     };
     rec.onerror = (e) => {
       if (['not-allowed', 'service-not-allowed', 'audio-capture'].includes(e.error)) {
@@ -142,12 +158,12 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
     };
     rec.onend = () => {
       if (recRef.current !== rec) return;
-      firstSeenRef.current = new Map(); // result indexes restart with each recognition session
+      firstSeenRef.current = new Map();
       if (pendingStopRef.current) {
         pendingStopRef.current();
         return;
       }
-      if (listeningRef.current && !pausedRef.current && micOnRef.current) {
+      if (listeningRef.current && !studentTalkingRef.current && micOnRef.current) {
         try { rec.start(); } catch {}
       }
     };
@@ -162,77 +178,30 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
     }
   }
 
-  function resumeMic() {
-    if (listeningRef.current && micOnRef.current && recRef.current) {
-      try { recRef.current.start(); } catch {}
-    }
-  }
-
-  // ---- The student's voice ---------------------------------------------------------
-
-  // Called by the engine. Pauses the mic (so the student's voice can't be
-  // transcribed as the teacher's), speaks, and reports real start/end times.
-  async function say(text) {
-    pausedRef.current = true;
+  // The student is about to speak: stop the mic so its voice isn't transcribed,
+  // and pause the teaching timer. Waits briefly for the mic to release.
+  function pauseMicForStudent() {
+    studentTalkingRef.current = true;
     pausedSinceRef.current = performance.now();
-    setBubble({ text, live: true });
     interimRef.current = '';
     setInterim('');
-    if (micOnRef.current && recRef.current) {
-      await new Promise((resolve) => {
-        pendingStopRef.current = resolve;
-        try { recRef.current.stop(); } catch { resolve(); }
-        setTimeout(resolve, 1000);
-      });
+    if (!micOnRef.current || !recRef.current) return Promise.resolve();
+    return new Promise((resolve) => {
+      pendingStopRef.current = resolve;
+      try { recRef.current.stop(); } catch { resolve(); }
+      setTimeout(resolve, 400);
+    }).then(() => {
       pendingStopRef.current = null;
-    }
-    let start = now();
-    let end = start;
-    if (!finishingRef.current) {
-      const timing = await speakAloud(text);
-      start = timing.start;
-      end = timing.end;
-    }
-    pausedTotalRef.current += performance.now() - pausedSinceRef.current;
-    pausedSinceRef.current = null;
-    pausedRef.current = false;
-    setBubble((b) => (b ? { ...b, live: false } : b));
-    if (!finishingRef.current) resumeMic();
-    return { start, end };
+    });
   }
 
-  function speakAloud(text) {
-    ttsActiveRef.current = true;
-    return new Promise((resolve) => {
-      let start = now();
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        ttsActiveRef.current = false;
-        clearTimeout(timersRef.current.speak);
-        cancelSpeechRef.current = null;
-        resolve({ start, end: now() });
-      };
-      cancelSpeechRef.current = () => {
-        try { window.speechSynthesis?.cancel(); } catch {}
-        finish();
-      };
-      if (!voiceOnRef.current || !window.speechSynthesis) {
-        timersRef.current.speak = setTimeout(finish, 2500); // time to read the bubble
-        return;
-      }
-      const u = new SpeechSynthesisUtterance(text);
-      u.lang = 'en-US';
-      u.pitch = level.voice.pitch;
-      u.rate = level.voice.rate;
-      u.onstart = () => (start = now());
-      u.onend = finish;
-      u.onerror = finish;
-      timersRef.current.speak = setTimeout(finish, 2500 + text.split(/\s+/).length * 450); // safety net
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(u);
-    });
+  function resumeMicAfterStudent() {
+    if (pausedSinceRef.current) pausedTotalRef.current += performance.now() - pausedSinceRef.current;
+    pausedSinceRef.current = null;
+    studentTalkingRef.current = false;
+    if (!finishingRef.current && listeningRef.current && micOnRef.current && recRef.current) {
+      try { recRef.current.start(); } catch {}
+    }
   }
 
   // ---- Ending --------------------------------------------------------------------------
@@ -240,8 +209,7 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
   function stopEverything() {
     listeningRef.current = false;
     clearInterval(timersRef.current.tick);
-    clearTimeout(timersRef.current.speak);
-    cancelSpeechRef.current?.();
+    playerRef.current?.cancel();
     const rec = recRef.current;
     recRef.current = null;
     try { rec?.stop(); } catch {}
@@ -254,9 +222,9 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
     const timeUsedSec = Math.min(timeLimitSec, teachingElapsed());
     listeningRef.current = false;
     clearInterval(timersRef.current.tick);
-    cancelSpeechRef.current?.();
+    playerRef.current?.cancel();
     try { recRef.current?.stop(); } catch {}
-    await new Promise((r) => setTimeout(r, 800)); // let the last words arrive
+    await new Promise((r) => setTimeout(r, 600)); // let the last words arrive
     const engine = engineRef.current;
     if (interimRef.current) engine.onTeacherFinal(interimRef.current, now(), now());
     interimRef.current = '';
@@ -269,6 +237,7 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
       finalModel: engine.model,
       events: engine.events,
       utterances: engine.utterances,
+      latencies: engine.latencies,
       timeUsedSec: Math.round(timeUsedSec),
     });
   }
@@ -281,17 +250,10 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
 
   function submitTyped(e) {
     e.preventDefault();
-    if (pausedRef.current || !typed.trim()) return;
+    if (studentTalkingRef.current || !typed.trim()) return;
     const t = now();
     engineRef.current?.onTeacherFinal(typed, t, t); // no measured duration: excluded from pace
-    setBubble((b) => (b && !b.live ? null : b));
     setTyped('');
-    engineRef.current?.tick();
-  }
-
-  function toggleVoice() {
-    voiceOnRef.current = !voiceOnRef.current;
-    setVoiceOn(voiceOnRef.current);
   }
 
   function toggleQuestions() {
@@ -304,93 +266,81 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
 
   const speaking = !!snap?.speaking;
   const behavior = snap?.behavior || 'listening';
-  const low = remaining <= 15;
   const utterances = snap?.utterances || [];
+  const status = phase === 'finishing' ? 'Wrapping up' : behaviorLabel(speaking ? 'responding' : behavior);
+  const lastLatency = snap?.latencies?.[snap.latencies.length - 1];
 
   return (
-    <div className="stack">
-      <div className="session-bar card">
-        <div>
-          <span className={`timer ${low ? 'low' : ''}`}>{formatTime(remaining)}</span>
-          <span className="muted"> left{speaking && ' (paused while they talk)'}</span>
+    <div className="session">
+      <div className="session-bar">
+        <div className="session-meta">
+          <span className={`timer ${remaining <= 15 ? 'low' : ''}`}>{formatTime(remaining)}</span>
+          <span className="muted">
+            Teaching a {level.label.toLowerCase()}
+            {setup.topic ? ` · ${setup.topic}` : ''}
+          </span>
         </div>
-        <div className="row">
-          <button className={`chip small-chip ${voiceOn ? 'selected' : ''}`} onClick={toggleVoice}>
-            {voiceOn ? '🔊 Voice on' : '🔇 Voice off'}
-          </button>
-          <button className={`chip small-chip ${questionsOn ? 'selected' : ''}`} onClick={toggleQuestions}>
-            {questionsOn ? '🙋 Questions on' : '🤐 Questions off'}
-          </button>
-          <button className="link" onClick={cancel} disabled={phase === 'finishing'}>Cancel</button>
-          <button className="btn danger" onClick={finish} disabled={phase === 'finishing'}>
-            {phase === 'finishing' ? 'Wrapping up…' : '■ End session'}
+        <div className="session-actions">
+          <label className="switch">
+            <input type="checkbox" checked={questionsOn} onChange={toggleQuestions} />
+            <span>Student questions</span>
+          </label>
+          <button className="btn-text" onClick={cancel} disabled={phase === 'finishing'}>Cancel</button>
+          <button className="btn primary" onClick={finish} disabled={phase === 'finishing'}>
+            {phase === 'finishing' ? 'Wrapping up…' : 'End session'}
           </button>
         </div>
       </div>
 
-      {micState === 'unsupported' && <p className="warning">This browser doesn't support speech recognition. Use Chrome, or type below.</p>}
-      {micState === 'blocked' && <p className="warning">Microphone is blocked. Allow mic access in the address bar, or type below.</p>}
+      {(micState === 'unsupported' || micState === 'blocked') && (
+        <p className="notice">
+          {micState === 'unsupported' ? "This browser doesn't support speech recognition. Use Chrome, or type below." : 'Microphone is blocked. Allow access in the address bar, or type below.'}
+        </p>
+      )}
 
-      <section className="card stage">
-        <div className="stage-avatar">
-          <Avatar behavior={behavior} speaking={speaking} thinking={!!snap?.thinking} level={level} />
+      <div className="session-grid">
+        <section className="stage">
+          <Avatar behavior={behavior} speaking={speaking} thinking={!!snap?.thinking} />
           <p className="stage-status">
-            {micState === 'on' && !speaking && phase === 'live' && <span className="rec-dot">● </span>}
-            {phase === 'finishing' ? 'Wrapping up…' : behaviorLabel(speaking ? 'responding' : behavior)}
+            {micState === 'on' && !speaking && phase === 'live' && <span className="live-dot" aria-hidden />}
+            {status}
           </p>
-        </div>
-        <div className="stage-right">
-          <p className="eyebrow">Teaching {level.emoji} {level.label}</p>
-          {bubble ? (
-            <div className={`speech-bubble ${bubble.live ? 'live' : ''}`}>
-              <p>{bubble.text}</p>
-              {bubble.live && <button className="link small" onClick={() => cancelSpeechRef.current?.()}>skip</button>}
+          <p className={`caption ${speaking ? 'live' : ''}`} aria-live="polite">
+            {snap?.caption || (utterances.length ? '' : 'Start explaining out loud. Your student will jump in when something needs clearing up.')}
+          </p>
+          {voiceNote && <p className="hint">{voiceNote}</p>}
+        </section>
+
+        <aside className="side">
+          <StudentPanel model={snap?.model} loading={extractState === 'loading'} error={extractState === 'failed' ? extractError : ''} onRetry={loadExtraction} />
+          <div className="transcript">
+            <h3 className="label">Transcript</h3>
+            <div className="convo" ref={convoRef}>
+              {utterances.length === 0 && !interim && <p className="muted small">Your words appear here.</p>}
+              {utterances.map((u) => <Turn key={u.id} u={u} />)}
+              {interim && <p className="turn teacher interim"><span className="said">{interim}</span></p>}
             </div>
-          ) : (
-            <p className="muted stage-hint">
-              {utterances.length === 0
-                ? "Start explaining out loud, like they're sitting in front of you. They'll ask questions when something doesn't click."
-                : 'Keep going. Answer their questions when they ask.'}
-            </p>
-          )}
-          {snap?.lastAction && <p className="muted tiny decision">Student's last decision: {snap.lastAction}</p>}
-          {snap?.lastError && <p className="error small">{snap.lastError}</p>}
-        </div>
-      </section>
-
-      <StudentPanel
-        model={snap?.model}
-        initialModel={snap?.initialModel}
-        loading={extractState === 'loading'}
-        error={extractState === 'failed' ? extractError : ''}
-        onRetry={loadExtraction}
-      />
-
-      <section className="card">
-        <h3 className="convo-title">Conversation</h3>
-        <div className="convo" ref={convoRef}>
-          {utterances.length === 0 && !interim && <p className="muted">Your words will appear here as you talk.</p>}
-          {utterances.map((u) => <Turn key={u.id} u={u} level={level} />)}
-          {interim && <p className="turn teacher interim">{interim}</p>}
-        </div>
-        <form className="type-instead" onSubmit={submitTyped}>
-          <input
-            value={typed}
-            onChange={(e) => setTyped(e.target.value)}
-            placeholder="Type instead (press Enter)"
-            disabled={phase === 'finishing' || speaking}
-          />
-        </form>
-      </section>
+            <form onSubmit={submitTyped}>
+              <input className="input" value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="Or type here and press Enter" disabled={phase === 'finishing' || speaking} />
+            </form>
+          </div>
+          <p className="debug">
+            {snap?.lastDecision && <>Student: {snap.lastDecision}</>}
+            {lastLatency !== undefined && <> · last reply {(lastLatency / 1000).toFixed(1)}s after you stopped</>}
+            {snap?.lastError && <span className="error"> · {snap.lastError}</span>}
+          </p>
+        </aside>
+      </div>
     </div>
   );
 }
 
-export function Turn({ u, level }) {
+export function Turn({ u }) {
   return (
-    <p className={`turn ${u.speaker === 'student' ? 'learner' : 'teacher'}`}>
+    <p className={`turn ${u.speaker === 'student' ? 'student' : 'teacher'}`}>
       <span className="ts">{fmt(u.start)}</span>
-      {u.speaker === 'student' && <span className="who">{level.emoji}</span>} {u.text}
+      <span className="who">{u.speaker === 'student' ? 'Student' : 'You'}</span>
+      <span className="said">{u.text}</span>
     </p>
   );
 }

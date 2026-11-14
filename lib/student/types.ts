@@ -51,6 +51,18 @@ export interface OpenGap {
   at: number;
 }
 
+// Explained != understood. A concept is only "demonstrated" when the student
+// explained it back or applied it correctly AND the teacher had taught it.
+export type Verification = 'not_verified' | 'partial' | 'demonstrated';
+
+export interface Demonstration {
+  at: number;
+  mode: 'explain_back' | 'apply' | 'answer';
+  text: string; // what the student said
+  verdict: 'demonstrated' | 'partial' | 'not_demonstrated';
+  note: string; // what was right / missing, from the verifier
+}
+
 export interface ConceptState extends ExtractedConcept {
   initialMastery: number; // 0..100
   mastery: number; // 0..100
@@ -60,6 +72,8 @@ export interface ConceptState extends ExtractedConcept {
   explainCount: number;
   evidence: Evidence[];
   openGaps: OpenGap[]; // newest last; may be missing on sessions saved before this field existed
+  verification: Verification;
+  demonstrations: Demonstration[];
 }
 
 export type MisconceptionStatus = 'active' | 'partially_addressed' | 'resolved';
@@ -172,7 +186,8 @@ export type KnowledgeEvent =
   | { type: 'question_status'; segmentId: string; at: number; questionId: string; status: QuestionStatus; quote: string }
   | { type: 'checked_understanding'; segmentId: string; at: number; quote: string }
   | { type: 'used_example'; segmentId: string; at: number; conceptId: string; quote: string }
-  | { type: 'rejected_proposal'; segmentId: string; at: number; detail: string };
+  | { type: 'rejected_proposal'; segmentId: string; at: number; detail: string }
+  | { type: 'demonstration'; segmentId: string; at: number; conceptId: string; mode: Demonstration['mode']; verdict: Demonstration['verdict']; text: string; note: string; status: Verification };
 
 // ---- Actions the student can take -----------------------------------------------
 
@@ -191,6 +206,17 @@ export type StudentAction =
   | { kind: 'none'; reason: string }
   | QuestionPlan
   | { kind: 'show_understanding'; conceptId: string; reason: string };
+
+// ---- Turn-taking -----------------------------------------------------------------
+
+export type TeacherQuestionKind = 'check' | 'content' | null;
+
+export type TurnAction =
+  | { kind: 'none'; reason: string }
+  | { kind: 'answer'; questionKind: 'check' | 'content'; conceptIds: string[]; reason: string }
+  | { kind: 'ask'; plan: QuestionPlan; reason: string }
+  | { kind: 'acknowledge'; conceptId: string | null; reason: string }
+  | { kind: 'demonstrate'; conceptId: string; mode: 'explain_back' | 'apply'; reason: string };
 
 // ---- Speech metrics ------------------------------------------------------------
 

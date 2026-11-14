@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 ESBUILD="${ESBUILD:-npx esbuild}"
-for r in prepare evaluate speak feedback; do
+for r in prepare evaluate reply verify tts feedback; do
   $ESBUILD app/api/$r/route.js --bundle --platform=node --format=esm \
     --alias:next/server=./tests/routes/next-server-stub.js \
     --alias:@anthropic-ai/sdk=./tests/routes/sdk-stub.js \

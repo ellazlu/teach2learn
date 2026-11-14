@@ -1,94 +1,140 @@
 import assert from 'node:assert/strict';
 import { POST as prepare } from './out/prepare.mjs';
 import { POST as evaluate } from './out/evaluate.mjs';
-import { POST as speak } from './out/speak.mjs';
+import { POST as reply } from './out/reply.mjs';
+import { POST as verify } from './out/verify.mjs';
+import { GET as ttsGet, POST as ttsPost } from './out/tts.mjs';
 import { POST as feedback } from './out/feedback.mjs';
+
 process.env.ANTHROPIC_API_KEY = 'test';
 globalThis.__sdkCalls = [];
-const req = (b) => new Request('http://x', { method: 'POST', body: JSON.stringify(b) });
+const req = (b, signal) => new Request('http://x', { method: 'POST', body: JSON.stringify(b), signal });
 const allStrict = (s) => { if (s && typeof s === 'object') { if (s.type === 'object') assert.equal(s.additionalProperties, false); Object.values(s).forEach(allStrict); } };
+const last = () => globalThis.__sdkCalls.at(-1);
 
-// prepare
+// ---- prepare: 1-3 key concepts --------------------------------------------------
 globalThis.__sdkReply = () => ({ topic_title: 'Photosynthesis', overview: 'o', concepts: [
-  { id: 'C1', name: 'Basics', description: 'd', difficulty: 1, prerequisites: [], key_terms: ['photosynthesis'] },
-  { id: 'c2', name: 'Chlorophyll', description: 'd', difficulty: 2, prerequisites: ['c1', 'c9'], key_terms: [] }],
+  { id: 'C1', name: 'Basics', description: 'Plants make sugar from light', difficulty: 1, prerequisites: [], key_terms: ['photosynthesis'] },
+  { id: 'c2', name: 'Chlorophyll', description: 'd', difficulty: 2, prerequisites: ['c1', 'c9'], key_terms: [] },
+  { id: 'c3', name: 'Light reactions', description: 'd', difficulty: 3, prerequisites: ['c2'], key_terms: [] },
+  { id: 'c4', name: 'Calvin cycle', description: 'd', difficulty: 4, prerequisites: ['c3'], key_terms: [] }],
   misconceptions: [{ id: 'M1', concept_id: 'c1', belief: 'Plants eat soil', correction: 'They make food' }] });
 let r = await prepare(req({ topic: 'Photosynthesis', levelId: 'middle', sources: [] }));
-let ext = await r.json();
+const ext = await r.json();
 assert.equal(r.status, 200);
-assert.deepEqual(ext.concepts.map((c) => c.id), ['c1', 'c2']);
+assert.deepEqual(ext.concepts.map((c) => c.id), ['c1', 'c2', 'c3'], 'capped at 3 key concepts');
 assert.deepEqual(ext.concepts[1].prerequisites, ['c1']);
-assert.equal(ext.misconceptions[0].conceptId, 'c1');
-assert.equal(ext.fromMaterial, false);
-let call = globalThis.__sdkCalls.at(-1);
-assert.equal(call.output_config.format.type, 'json_schema');
-allStrict(call.output_config.format.schema);
-assert.match(call.system, /No material was uploaded/);
-r = await prepare(req({ topic: '', sources: [] }));
-assert.equal(r.status, 400);
-console.log('✓ /api/prepare: structured output, sanitized ids/prereqs, topic-only mode, validation');
+assert.match(last().system, /1-3 KEY concepts/);
+allStrict(last().output_config.format.schema);
+console.log('✓ /api/prepare: 1-3 key concepts, sanitized, structured output');
 
-// evaluate: dynamic enums
-globalThis.__sdkReply = () => ({ concepts: [{ concept_id: 'C1', explained: true, correctness: 'Correct', clarity: 'clear', level_fit: 'appropriate', used_example: false, quote: 'x y z' }], misconceptions: [], undefined_terms: [], question_response: { quality: 'none', quote: '' }, checked_understanding: { happened: false, quote: '' } });
+// ---- evaluate: dynamic enums, gap field -------------------------------------------
+globalThis.__sdkReply = () => ({ concepts: [{ concept_id: 'C1', explained: true, correctness: 'Correct', clarity: 'clear', level_fit: 'appropriate', used_example: false, quote: 'x y z', gap: '' }], misconceptions: [], undefined_terms: [], question_response: { quality: 'none', quote: '' }, checked_understanding: { happened: false, quote: '' } });
 r = await evaluate(req({ levelId: 'middle', segment: 'x y z', model: { concepts: [{ id: 'c1' }, { id: 'c2' }], misconceptions: [{ id: 'm1' }] } }));
 const prop = await r.json();
 assert.equal(prop.concepts[0].concept_id, 'c1');
-assert.equal(prop.concepts[0].correctness, 'correct');
-call = globalThis.__sdkCalls.at(-1);
-assert.deepEqual(call.output_config.format.schema.properties.concepts.items.properties.concept_id.enum, ['c1', 'c2']);
-allStrict(call.output_config.format.schema);
-// no misconceptions -> plain string, not an empty enum
-await evaluate(req({ levelId: 'middle', segment: 'x', model: { concepts: [{ id: 'c1' }], misconceptions: [] } }));
-assert.equal(globalThis.__sdkCalls.at(-1).output_config.format.schema.properties.misconceptions.items.properties.misconception_id.enum, undefined);
-globalThis.__sdkReply = () => new Error('rate limited');
-r = await evaluate(req({ levelId: 'middle', segment: 'x', model: { concepts: [{ id: 'c1' }], misconceptions: [] } }));
-assert.equal(r.status, 500);
-console.log('✓ /api/evaluate: dynamic id enums, lowercased enums, errors surface as 500');
+assert.deepEqual(last().output_config.format.schema.properties.concepts.items.properties.concept_id.enum, ['c1', 'c2']);
+assert.ok(last().output_config.format.schema.properties.concepts.items.required.includes('gap'));
+console.log('✓ /api/evaluate: dynamic id enums, specific gap field');
 
-// speak
-globalThis.__sdkReply = () => ({ text: '"Wait, do plants eat dirt?"' });
-r = await speak(req({ levelId: 'kindergarten', intent: 'misconception', details: { belief: 'Plants eat soil' }, teacherSaid: 'plants', whatYouKnow: '', alreadyAsked: [] }));
-assert.equal((await r.json()).text, 'Wait, do plants eat dirt?');
-assert.match(globalThis.__sdkCalls.at(-1).messages[0].content[0].text, /You genuinely believe: "Plants eat soil"/);
-console.log('✓ /api/speak: intent comes from the app, quotes stripped');
+// ---- reply: streamed plain text ----------------------------------------------------
+globalThis.__streamChunks = ['Wait, ', "don't plants ", 'get food from the soil?'];
+const body = { levelId: 'middle', intent: 'misconception', details: { belief: 'Plants get their food from the soil.' }, knowledge: '- You believe: "Plants get their food from the soil."', taught: '', conversation: [], teacherJustSaid: 'plants make their own food', alreadySaid: [] };
+r = await reply(req(body));
+assert.equal(r.status, 200);
+assert.match(r.headers.get('content-type'), /text\/plain/);
+const reader = r.body.getReader();
+const dec = new TextDecoder();
+const parts = [];
+for (;;) { const { done, value } = await reader.read(); if (done) break; parts.push(dec.decode(value)); }
+assert.ok(parts.length >= 3, `streamed in ${parts.length} chunks`);
+assert.equal(parts.join(''), "Wait, don't plants get food from the soil?");
+const sent = last();
+assert.equal(sent.max_tokens, 160);
+assert.match(sent.messages[0].content[0].text, /<teacher_just_said>\nplants make their own food/);
+assert.match(sent.messages[0].content[0].text, /You genuinely believe: "Plants get their food from the soil\."/);
+assert.match(sent.system, /bright and you learn from good explanations/);
+// abort mid-stream stops the model call
+globalThis.__streamChunks = Array.from({ length: 50 }, () => 'word ');
+globalThis.__streamAborted = false;
+const ac = new AbortController();
+r = await reply(req(body, ac.signal));
+const rd = r.body.getReader();
+await rd.read();
+ac.abort();
+await rd.cancel().catch(() => {});
+await new Promise((res) => setTimeout(res, 30));
+assert.equal(globalThis.__streamAborted, true, 'model stream aborted when the client goes away');
+console.log('✓ /api/reply: streams text chunks, sees exactly what the teacher said, aborts with the client');
 
-// speak: vague lines are retried, then replaced by a specific fallback
-const GAP = "If gravity pulls the planets in, why don't they fall into the Sun?";
-const gravityBody = { levelId: 'high', intent: 'clarify', details: { conceptName: 'Gravity and orbits', focusQuestion: GAP, focusQuote: 'pulls the planets toward the sun' }, anchors: [GAP, 'pulls the planets toward the sun', 'Gravity and orbits', 'gravity'], teacherSaid: 'gravity pulls the planets toward the sun', whatYouKnow: '', alreadyAsked: [] };
-let replies = ["Sorry, I sort of get the components of the solar system, but I'm not quite there. Could you explain it another way?", "You said gravity pulls the planets in, so why don't they fall into the Sun?"];
-globalThis.__sdkReply = () => ({ text: replies.shift() });
-let sp = await (await speak(req(gravityBody))).json();
-assert.equal(sp.source, 'retry');
-assert.match(sp.text, /gravity/);
-assert.match(globalThis.__sdkCalls.at(-1).messages[0].content[0].text, /too vague/);
-assert.match(globalThis.__sdkCalls.at(-1).messages[0].content[0].text, /You're stuck on one specific point/);
-replies = ['Can you explain it another way?', 'I am confused.'];
-sp = await (await speak(req(gravityBody))).json();
-assert.equal(sp.source, 'fallback');
-assert.equal(sp.text, GAP);
-console.log('✓ /api/speak: vague lines retried once, then replaced by the specific question');
-// evaluate schema asks for the specific gap
-await evaluate(req({ levelId: 'middle', segment: 'x', model: { concepts: [{ id: 'c1' }], misconceptions: [] } })).catch(() => {});
+// ---- verify ----------------------------------------------------------------------------
+globalThis.__sdkReply = () => ({ verdict: 'Demonstrated', note: 'Says plants make sugar from light.' });
+r = await verify(req({ levelId: 'middle', concept: { name: 'Basics', description: 'Plants make sugar from light' }, mode: 'explain_back', statement: 'so plants make sugar using light?', taught: 'plants make food from light' }));
+assert.deepEqual(await r.json(), { verdict: 'demonstrated', note: 'Says plants make sugar from light.' });
+assert.match(last().messages[0].content[0].text, /<student_statement mode="explain_back">/);
+globalThis.__sdkReply = () => ({ verdict: 'amazing', note: '' });
+r = await verify(req({ levelId: 'middle', concept: { name: 'B', description: 'd' }, mode: 'answer', statement: 'x' }));
+assert.equal((await r.json()).verdict, 'not_demonstrated', 'unknown verdicts never count as understanding');
+console.log('✓ /api/verify: graded against the material, strict verdicts');
 
-// feedback: LLM path cites evidence; uncited dropped; LLM failure -> fallback
-const { initStudentModel } = await import('./out/knowledge.mjs');
-const extraction = { ...ext, concepts: ext.concepts };
+// ---- tts -------------------------------------------------------------------------------
+delete process.env.ELEVENLABS_API_KEY;
+assert.deepEqual(await (await ttsGet()).json(), { provider: 'browser' });
+assert.equal((await ttsPost(req({ text: 'hi' }))).status, 404);
+process.env.ELEVENLABS_API_KEY = 'el-test';
+process.env.ELEVENLABS_VOICE_ID_YOUNG = 'kidvoice';
+let upstreamReq;
+const realFetch = globalThis.fetch;
+globalThis.fetch = async (url, init) => { upstreamReq = { url, init }; return new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { 'Content-Type': 'audio/mpeg' } }); };
+assert.deepEqual(await (await ttsGet()).json(), { provider: 'elevenlabs' });
+r = await ttsPost(req({ text: 'Wait, really?', levelId: 'middle' }));
+assert.equal(r.status, 200);
+assert.equal(r.headers.get('content-type'), 'audio/mpeg');
+assert.equal((await r.arrayBuffer()).byteLength, 3);
+assert.match(upstreamReq.url, /\/v1\/text-to-speech\/kidvoice\/stream\?output_format=mp3_44100_128$/);
+assert.equal(upstreamReq.init.headers['xi-api-key'], 'el-test');
+const tb = JSON.parse(upstreamReq.init.body);
+assert.equal(tb.model_id, 'eleven_flash_v2_5');
+assert.equal(tb.text, 'Wait, really?');
+globalThis.fetch = async () => new Response('bad voice', { status: 422 });
+assert.equal((await ttsPost(req({ text: 'x', levelId: 'expert' }))).status, 502, 'upstream errors surface so the client falls back');
+globalThis.fetch = realFetch;
+delete process.env.ELEVENLABS_API_KEY;
+console.log('✓ /api/tts: ElevenLabs Flash v2.5 stream proxy (key stays server-side), browser fallback without a key');
+
+// ---- feedback: exactly three evidence-backed items + concept summary --------------------
+const { initStudentModel, applyEvaluation, applyVerification } = await import('./out/knowledge.mjs');
+const extraction = { topicTitle: 'P', overview: '', fromMaterial: false, concepts: ext.concepts, misconceptions: ext.misconceptions };
 const initial = initStudentModel(extraction, 'middle');
-const utterances = [{ id: 'u1', speaker: 'teacher', text: 'the thylakoid does stuff and plants are neat', start: 5, end: 9 }];
-const events = [{ type: 'undefined_term', segmentId: 's1', at: 5, term: 'thylakoid', quote: 'the thylakoid does stuff' }];
-globalThis.__sdkReply = (p) => ({ summary: 'S', suggestions: [{ title: 'Define thylakoid', detail: 'At 0:05…', evidence_ids: ['E1'] }, { title: 'Be clearer', detail: 'generic', evidence_ids: [] }], strengths: [], outside_knowledge: [{ term_or_idea: 'x', student_quote: 'not said at all here', correct: true, comment: 'c' }] });
-r = await feedback(req({ levelId: 'middle', topicTitle: 'P', initial, final: initial, events, utterances, sources: [] }));
+const seg = { id: 's1', speaker: 'teacher', text: 'the thylakoid does stuff and plants make sugar from light', start: 5, end: 9 };
+let final = applyEvaluation(initial, seg, { concepts: [{ concept_id: 'c1', explained: true, correctness: 'correct', clarity: 'clear', level_fit: 'appropriate', used_example: false, quote: 'plants make sugar from light', gap: '' }], misconceptions: [], undefined_terms: [{ term: 'thylakoid', quote: 'the thylakoid does stuff' }], question_response: { quality: 'none', quote: '' }, checked_understanding: { happened: false, quote: '' } });
+const events = [...final.events];
+final = final.model;
+const v = applyVerification(final, 'c1', { at: 40, mode: 'explain_back', text: 'so plants make sugar from light?', verdict: 'demonstrated', note: 'right' });
+final = v.model;
+events.push(...v.events);
+const utterances = [seg, { id: 'u2', speaker: 'student', text: 'so plants make sugar from light?', start: 40, end: 42 }];
+// Like the model, pick evidence ids by reading the numbered evidence list in the prompt.
+const idFor = (p, re) => p.messages[0].content[0].text.split('\n').find((l) => re.test(l))?.split(' ')[0];
+globalThis.__sdkReply = (p) => ({
+  went_well: { text: 'At 0:40 your explanation landed.', evidence_id: idFor(p, /correctly explained back/) },
+  improve: { text: 'You used "thylakoid" without defining it.', evidence_id: idFor(p, /thylakoid/) },
+  try_next: { text: 'Define new terms in plain words first.', evidence_id: idFor(p, /thylakoid/) },
+});
+r = await feedback(req({ levelId: 'middle', topicTitle: 'P', initial, final, events, utterances }));
 let fb = await r.json();
-assert.equal(fb.suggestions.length, 1);
-assert.equal(fb.suggestions[0].evidence[0].at, 5);
-assert.equal(fb.outside_knowledge.length, 0, 'unverifiable quote dropped');
+assert.deepEqual(Object.keys(fb.teaching), ['went_well', 'improve', 'try_next']);
+assert.equal(fb.teaching.went_well.evidence.kind, 'demonstrated');
+assert.equal(fb.teaching.went_well.text, 'Your explanation landed.', 'invented timestamp stripped');
+assert.equal(fb.teaching.improve.evidence.kind, 'undefined_term');
+assert.equal(fb.concepts.find((c) => c.conceptId === 'c1').status, 'Demonstrated understanding');
+assert.equal(fb.concepts.find((c) => c.conceptId === 'c2').status, 'Not yet verified');
 assert.equal(fb.usedFallback, false);
-assert.deepEqual(globalThis.__sdkCalls.at(-1).output_config.format.schema.properties.suggestions.items.properties.evidence_ids.items.enum, fb.evidence.map((e) => e.id));
 globalThis.__sdkReply = () => new Error('overloaded');
-fb = await (await feedback(req({ levelId: 'middle', topicTitle: 'P', initial, final: initial, events, utterances, sources: [] }))).json();
+fb = await (await feedback(req({ levelId: 'middle', topicTitle: 'P', initial, final, events, utterances }))).json();
 assert.equal(fb.usedFallback, true);
-assert.ok(fb.suggestions.length >= 1);
+assert.ok(fb.teaching.improve.evidence);
 fb = await (await feedback(req({ levelId: 'middle', topicTitle: 'P', events: [], utterances: [] }))).json();
-assert.match(fb.summary, /No speech was captured/);
-console.log('✓ /api/feedback: evidence enum, uncited suggestions dropped, LLM failure -> evidence fallback, missing model handled');
+assert.equal(fb.spoke, false);
+console.log('✓ /api/feedback: three evidence-backed items, concept summary from verification, fallback without the LLM');
 console.log('\nALL ROUTE CHECKS PASSED');

@@ -1,25 +1,23 @@
 'use client';
 
-// PLACEHOLDER AVATAR. Replace this file (and the "Avatar" CSS block in
-// app/globals.css) with your hand-designed character. The rest of the app only
-// relies on these props:
+// PLACEHOLDER AVATAR. Your team's hand-drawn character replaces this file (and
+// the "Avatar" block in app/globals.css). The rest of the app only uses:
 //
 //   behavior: 'listening' | 'curious' | 'confused' | 'understanding' | 'challenging' | 'responding'
 //             (the student's state from lib/student/behavior.ts)
-//   speaking: true while the student's line is being spoken
-//   thinking: true while the student is evaluating / choosing what to say
-//   level:    the learner level ({ emoji, label })
+//   speaking: true while the student's voice is playing
+//   thinking: true while the student is forming a reply
 //
-// Easy swap options: one image/GIF per behavior, a Lottie/Rive animation with a
-// "behavior" input, or your own SVG using the same class names.
+// Easy swap: one image per behavior (plus a talking loop for `speaking`), a
+// Lottie/Rive file with a "behavior" input, or an SVG using these class names.
 
 const LABELS = {
   listening: 'Listening',
   curious: 'Curious',
   confused: 'Confused',
-  understanding: 'Getting it!',
-  challenging: 'Thinking critically',
-  responding: 'Talking',
+  understanding: 'Getting it',
+  challenging: 'Thinking it over',
+  responding: 'Speaking',
 };
 
 export function behaviorLabel(behavior) {
@@ -27,49 +25,36 @@ export function behaviorLabel(behavior) {
 }
 
 function Mouth({ behavior, speaking }) {
-  if (speaking) return <ellipse className="avatar-mouth talking" cx="100" cy="134" rx="14" ry="10" />;
+  if (speaking) return <ellipse className="av-mouth talking" cx="100" cy="132" rx="11" ry="7" />;
   switch (behavior) {
     case 'confused':
-      return <path className="avatar-mouth" d="M82 136 Q91 128 100 136 T118 136" />;
+      return <path className="av-mouth" d="M86 134 Q93 129 100 134 T114 134" />;
     case 'understanding':
-      return <path className="avatar-mouth" d="M78 124 Q100 150 122 124" />;
+      return <path className="av-mouth" d="M82 126 Q100 144 118 126" />;
     case 'challenging':
-      return <path className="avatar-mouth" d="M86 134 L114 130" />;
+      return <path className="av-mouth" d="M88 133 L112 130" />;
     case 'curious':
-      return <ellipse className="avatar-mouth" cx="100" cy="134" rx="6" ry="7" />;
+      return <ellipse className="av-mouth" cx="100" cy="133" rx="5" ry="6" />;
     default:
-      return <path className="avatar-mouth" d="M84 128 Q100 140 116 128" />;
+      return <path className="av-mouth" d="M88 129 Q100 137 112 129" />;
   }
 }
 
-export default function Avatar({ behavior = 'listening', speaking = false, thinking = false, level }) {
+export default function Avatar({ behavior = 'listening', speaking = false, thinking = false }) {
   const b = speaking ? 'responding' : behavior;
   return (
-    <div className={`avatar behavior-${b}${thinking && !speaking ? ' is-thinking' : ''}`} aria-label={`Student avatar: ${behaviorLabel(b)}`}>
-      <svg viewBox="0 0 200 200" className="avatar-svg">
-        <circle className="avatar-head" cx="100" cy="100" r="78" />
-        <g className="avatar-brows">
-          <path className="brow left" d="M58 66 Q72 58 86 64" />
-          <path className="brow right" d="M114 64 Q128 58 142 66" />
+    <div className={`avatar b-${b}${thinking && !speaking ? ' thinking' : ''}`} role="img" aria-label={`Student: ${behaviorLabel(b)}`}>
+      <svg viewBox="0 0 200 200" className="av-svg">
+        <circle className="av-head" cx="100" cy="100" r="76" />
+        <path className="av-brow left" d="M62 70 Q73 64 84 68" />
+        <path className="av-brow right" d="M116 68 Q127 64 138 70" />
+        <g className="av-eyes">
+          <circle cx="74" cy="92" r="6" />
+          <circle cx="126" cy="92" r="6" />
         </g>
-        <g className="avatar-eyes">
-          <ellipse className="eye left" cx="72" cy="88" rx="8" ry="10" />
-          <ellipse className="eye right" cx="128" cy="88" rx="8" ry="10" />
-        </g>
-        <circle className="avatar-cheek" cx="56" cy="114" r="9" />
-        <circle className="avatar-cheek" cx="144" cy="114" r="9" />
         <Mouth behavior={b} speaking={speaking} />
       </svg>
-      {b === 'confused' && <span className="avatar-mark">?</span>}
-      {b === 'understanding' && <span className="avatar-mark spark">!</span>}
-      {thinking && !speaking && (
-        <div className="avatar-thinking">
-          <span />
-          <span />
-          <span />
-        </div>
-      )}
-      {level && <span className="avatar-badge" title={level.label}>{level.emoji}</span>}
+      <span className="av-placeholder">Placeholder avatar</span>
     </div>
   );
 }

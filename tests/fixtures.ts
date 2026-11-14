@@ -9,7 +9,6 @@ export const EXTRACTION: Extraction = sanitizeExtraction(
       { id: 'c1', name: 'What photosynthesis is', description: 'Plants make sugar from light, water and CO2.', difficulty: 1, prerequisites: [], keyTerms: ['photosynthesis'] },
       { id: 'c2', name: 'Chlorophyll', description: 'Green pigment that absorbs red and blue light.', difficulty: 2, prerequisites: ['c1'], keyTerms: ['chlorophyll'] },
       { id: 'c3', name: 'Light-dependent reactions', description: 'Split water, release oxygen, make ATP and NADPH.', difficulty: 4, prerequisites: ['c1', 'c2'], keyTerms: ['ATP', 'NADPH', 'photolysis'] },
-      { id: 'c4', name: 'Calvin cycle', description: 'Fixes CO2 into sugar using ATP and NADPH.', difficulty: 4, prerequisites: ['c3'], keyTerms: ['RuBisCO', 'G3P'] },
     ],
     misconceptions: [
       { id: 'm1', conceptId: 'c1', belief: 'Plants get their food from the soil.', correction: 'Plants make their own food from light, water and carbon dioxide.' },

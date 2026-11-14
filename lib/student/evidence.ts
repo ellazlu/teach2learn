@@ -14,6 +14,9 @@ export type EvidenceKind =
   | 'incorrect_explanation'
   | 'unclear_explanation'
   | 'open_question'
+  | 'demonstrated'
+  | 'demo_partial'
+  | 'demo_failed'
   | 'misconception_resolved'
   | 'misconception_partial'
   | 'misconception_unaddressed'
@@ -74,6 +77,12 @@ export function buildEvidence({ initial, final, events, metrics, learning }: Evi
     if (e.type === 'mastery_change' && e.to - e.from >= 8) push({ kind: 'mastery_gain', at: e.at, label: `Student's grasp of ${name(e.conceptId)} rose from ${e.from} to ${e.to} (simulated).`, quote: e.quote, positive: true });
     if (e.type === 'used_example') push({ kind: 'used_example', at: e.at, label: `Used an example or analogy for ${name(e.conceptId)}.`, quote: e.quote, positive: true });
     if (e.type === 'checked_understanding') push({ kind: 'checked_understanding', at: e.at, label: 'Checked whether the student understood.', quote: e.quote, positive: true });
+    if (e.type === 'demonstration') {
+      const how = e.mode === 'apply' ? 'applied' : e.mode === 'answer' ? 'answered a question about' : 'explained back';
+      if (e.verdict === 'demonstrated') push({ kind: 'demonstrated', at: e.at, label: `The student correctly ${how} ${name(e.conceptId)}.`, quote: e.text, positive: true });
+      else if (e.verdict === 'partial') push({ kind: 'demo_partial', at: e.at, label: `The student only partly ${how} ${name(e.conceptId)}: ${e.note}`, quote: e.text, positive: false });
+      else push({ kind: 'demo_failed', at: e.at, label: `The student ${how} ${name(e.conceptId)} incorrectly: ${e.note}`, quote: e.text, positive: false });
+    }
     if (e.type === 'misconception_change') {
       const m = final.misconceptions.find((x) => x.id === e.misconceptionId);
       if (e.to === 'resolved') push({ kind: 'misconception_resolved', at: e.at, label: `Corrected the student's belief that "${m?.belief}".`, quote: e.quote, positive: true });
@@ -126,53 +135,121 @@ export function buildEvidence({ initial, final, events, metrics, learning }: Evi
     .map((e, i) => ({ ...e, id: `E${i + 1}` }));
 }
 
-// Used when the LLM is unavailable: still evidence-based, just plainer.
-const FALLBACK: Partial<Record<EvidenceKind, (e: EvidenceItem) => Omit<Suggestion, 'evidence'>>> = {
-  incorrect_explanation: (e) => ({ title: 'Double-check this explanation', detail: `${e.label} Re-read that part of your notes and try explaining it again.` }),
-  misconception_unaddressed: (e) => ({ title: 'Address the student\'s wrong idea directly', detail: e.label }),
-  question_unanswered: (e) => ({ title: 'Answer the student\'s question', detail: `${e.label} Unanswered questions often point to a gap worth reviewing.` }),
-  question_partial: (e) => ({ title: 'Finish answering the question', detail: e.label }),
-  undefined_term: (e) => ({ title: 'Define terms before using them', detail: e.label }),
-  unclear_explanation: (e) => ({ title: 'Make this explanation simpler', detail: `${e.label} Try an everyday example.` }),
-  open_question: (e) => ({ title: 'Answer what the student was still wondering', detail: `${e.label} If you can't answer it confidently, that's a gap worth reviewing.` }),
-  long_run: (e) => ({ title: 'Check in more often', detail: `${e.label} A quick "does that make sense?" gives the student a chance to tell you they're lost.` }),
-  no_checks: (e) => ({ title: 'Check for understanding', detail: e.label }),
-  slow_response: (e) => ({ title: 'Review what made you hesitate', detail: `${e.label} Long pauses before answering can be fine, but can also mark something you're unsure about.` }),
-  not_covered: (e) => ({ title: 'Cover the rest of the material', detail: e.label }),
-  pace: (e) => ({ title: 'Consider slowing down around new ideas', detail: `${e.label} That isn't wrong in itself, but new terms land better with a little room around them.` }),
+// ---- Three-item feedback -----------------------------------------------------------
+
+export interface FeedbackItem {
+  text: string;
+  evidence: EvidenceItem | null;
+}
+
+export interface ThreeItems {
+  went_well: FeedbackItem | null;
+  improve: FeedbackItem | null;
+  try_next: FeedbackItem | null;
+}
+
+// Most meaningful first.
+export const STRENGTH_ORDER: EvidenceKind[] = ['misconception_resolved', 'demonstrated', 'question_answered', 'checked_understanding', 'used_example', 'mastery_gain'];
+export const WEAKNESS_ORDER: EvidenceKind[] = [
+  'incorrect_explanation',
+  'misconception_unaddressed',
+  'demo_failed',
+  'question_unanswered',
+  'open_question',
+  'demo_partial',
+  'question_partial',
+  'undefined_term',
+  'unclear_explanation',
+  'misconception_partial',
+  'no_checks',
+  'long_run',
+  'slow_response',
+  'not_covered',
+  'pace',
+];
+
+const pick = (evidence: EvidenceItem[], order: EvidenceKind[]) => {
+  for (const k of order) {
+    const e = evidence.find((x) => x.kind === k);
+    if (e) return e;
+  }
+  return null;
 };
 
-export function fallbackSuggestions(evidence: EvidenceItem[], max = 5): Suggestion[] {
-  const out: Suggestion[] = [];
-  const uncovered = evidence.filter((e) => e.kind === 'not_covered');
-  for (const e of evidence) {
-    const f = FALLBACK[e.kind];
-    if (!f || e.positive || e.kind === 'not_covered') continue;
-    out.push({ ...f(e), evidence: [e] });
-  }
-  if (uncovered.length) {
-    const names = uncovered.map((e) => e.label.match(/"(.+)"/)?.[1] || e.label);
-    out.push({ title: 'Cover the rest of the material', detail: `You didn't get to ${names.join(', ')}. Teaching those next would show you whether you really know them.`, evidence: uncovered });
-  }
-  return out.slice(0, max);
+const WELL: Partial<Record<EvidenceKind, string>> = {
+  misconception_resolved: 'You directly corrected the student\'s wrong idea, and it stuck.',
+  demonstrated: 'Your explanation landed: the student could put it in their own words correctly.',
+  question_answered: "You answered the student's question directly instead of moving on.",
+  checked_understanding: 'You stopped to check whether the student was following.',
+  used_example: 'You used a concrete example, which made the idea easier to grasp.',
+  mastery_gain: 'Your explanation was clear enough for the student to start getting it.',
+};
+const IMPROVE: Partial<Record<EvidenceKind, [string, string]>> = {
+  incorrect_explanation: ['Part of your explanation didn\'t match the material.', 'Re-check that point in your notes, then explain it again in one or two sentences.'],
+  misconception_unaddressed: ['The student voiced a wrong idea and still believes it.', 'When the student says something wrong, say clearly why it\'s wrong and what\'s true instead.'],
+  demo_failed: ['When the student explained it back, they got it wrong.', 'Correct their explanation right away, then have them try once more.'],
+  question_unanswered: ["You didn't answer the student's question.", 'Answer the student\'s question before moving on; if you can\'t, that\'s a gap to review.'],
+  open_question: ['The student was still left with a specific question.', 'Before moving on, address what the student is still wondering.'],
+  demo_partial: ["The student's explanation back was missing a key part.", 'Fill in the missing piece, then ask them to explain it again.'],
+  question_partial: ["You only partly answered the student's question.", 'Answer the exact question asked, in one or two sentences.'],
+  undefined_term: ['You used a technical term without explaining it.', 'Define new terms in plain words the first time you use them.'],
+  unclear_explanation: ['One explanation was hard for this student to follow.', 'Use a simpler everyday example before the technical version.'],
+  misconception_partial: ['You touched on the student\'s wrong idea but didn\'t settle it.', 'State the correct idea directly and say why the wrong one fails.'],
+  no_checks: ['You never checked whether the student understood.', 'Ask the student to say it back in their own words at least once.'],
+  long_run: ['You talked for a long stretch without letting the student respond.', 'Pause after each key idea and ask a quick question.'],
+  slow_response: ['You hesitated a long time before answering a question.', 'Review the part you hesitated on: it may be a gap in your own understanding.'],
+  not_covered: ['You didn\'t get to all of the key ideas.', 'Start with the most important idea so it always gets covered.'],
+  pace: ['You spoke quickly for this student.', 'Slow down around new ideas and leave short pauses.'],
+};
+
+export function fallbackThree(evidence: EvidenceItem[]): ThreeItems {
+  const good = pick(evidence.filter((e) => e.positive), STRENGTH_ORDER);
+  const bad = pick(evidence.filter((e) => !e.positive), WEAKNESS_ORDER);
+  const tpl = bad ? IMPROVE[bad.kind] : null;
+  return {
+    went_well: good ? { text: WELL[good.kind] || good.label, evidence: good } : null,
+    improve: bad && tpl ? { text: tpl[0], evidence: bad } : null,
+    try_next: bad && tpl ? { text: tpl[1], evidence: bad } : null,
+  };
 }
 
-export interface RawLLMSuggestion {
-  title: string;
-  detail: string;
-  evidence_ids: string[];
+// The app shows timestamps itself; strip any the LLM wrote (they may be wrong).
+export function cleanText(t: string): string {
+  return String(t || '')
+    .replace(/\b(at|around|by)\s+\d{1,2}:\d{2}\s*,?\s*/gi, '')
+    .replace(/\(\s*\d{1,2}:\d{2}\s*\)/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+    .replace(/^./, (c) => c.toUpperCase())
+    .slice(0, 240);
 }
 
-// Keep only suggestions that cite real evidence; attach that evidence.
-export function attachEvidence(raw: RawLLMSuggestion[] | null | undefined, evidence: EvidenceItem[]): Suggestion[] {
+interface RawItem {
+  text: string;
+  evidence_id: string;
+}
+
+// Accept the LLM's three items only if each cites valid evidence of the right
+// kind (a strength must cite something that went well, a weakness an issue);
+// otherwise use the deterministic choice for that slot.
+export function validateThree(raw: { went_well?: RawItem; improve?: RawItem; try_next?: RawItem } | null, evidence: EvidenceItem[]): ThreeItems & { usedFallback: boolean } {
   const byId = new Map(evidence.map((e) => [e.id.toUpperCase(), e]));
-  return (raw || [])
-    .map((s) => ({
-      title: String(s.title || '').trim(),
-      detail: String(s.detail || '').trim(),
-      evidence: [...new Set((s.evidence_ids || []).map((id) => String(id).toUpperCase()))].map((id) => byId.get(id)).filter((e): e is EvidenceItem => !!e),
-    }))
-    .filter((s) => s.title && s.detail && s.evidence.length > 0);
+  const fb = fallbackThree(evidence);
+  let usedFallback = false;
+  const take = (item: RawItem | undefined, want: 'positive' | 'negative' | 'any', fallback: FeedbackItem | null): FeedbackItem | null => {
+    const e = item ? byId.get(String(item.evidence_id || '').toUpperCase()) : undefined;
+    const ok = !!item && !!e && cleanText(item.text) && (want === 'any' || (want === 'positive') === e.positive);
+    if (ok) return { text: cleanText(item!.text), evidence: e! };
+    usedFallback = true;
+    return fallback;
+  };
+  const improve = take(raw?.improve, 'negative', fb.improve);
+  return {
+    went_well: take(raw?.went_well, 'positive', fb.went_well),
+    improve,
+    try_next: improve ? take(raw?.try_next, 'any', fb.try_next) : fb.try_next,
+    usedFallback,
+  };
 }
 
 export function evidenceForPrompt(evidence: EvidenceItem[]): string {

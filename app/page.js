@@ -10,16 +10,16 @@ import { getLevel } from '../lib/levels.ts';
 import { loadHistory, saveHistory, attemptNumber, compactEvents, MAX_HISTORY } from '../lib/history.ts';
 
 // Screens: setup -> session -> feedback -> results
-//          history -> history-detail (reachable whenever you're not mid-session)
+//          history -> history-detail (any time you're not mid-session)
 const BUSY = ['session', 'feedback'];
 
 export default function Home() {
   const [screen, setScreen] = useState('setup');
   const [setup, setSetup] = useState(null); // { sources, topic, levelId, timeLimitSec, focus, topicId }
-  const [extraction, setExtraction] = useState(null); // concepts + misconceptions for this topic/level
-  const [pending, setPending] = useState(null); // finished session waiting for feedback
+  const [extraction, setExtraction] = useState(null);
+  const [pending, setPending] = useState(null);
   const [currentId, setCurrentId] = useState(null);
-  const [history, setHistory] = useState([]); // newest first
+  const [history, setHistory] = useState([]);
   const [saveFailed, setSaveFailed] = useState(false);
   const [viewingId, setViewingId] = useState(null);
   const [returnTo, setReturnTo] = useState('setup');
@@ -54,21 +54,21 @@ export default function Home() {
     setPending(sess);
     setScreen('feedback');
     try {
+      const topicTitle = sess.extraction?.topicTitle || s.topic || 'Your lesson';
       const fb = await postJSON('/api/feedback', {
         levelId: s.levelId,
-        topicTitle: sess.extraction?.topicTitle || s.topic || 'Your lesson',
+        topicTitle,
         initial: sess.initialModel,
         final: sess.finalModel,
         events: sess.events,
         utterances: sess.utterances,
-        sources: s.sources,
       });
       const record = {
-        version: 3,
+        version: 4,
         id: `s-${Date.now()}`,
         createdAt: new Date().toISOString(),
         topicId: s.topicId,
-        topicTitle: sess.extraction?.topicTitle || s.topic || 'Your lesson',
+        topicTitle,
         levelId: s.levelId,
         timeLimitSec: s.timeLimitSec,
         timeUsedSec: sess.timeUsedSec,
@@ -79,14 +79,11 @@ export default function Home() {
         utterances: sess.utterances,
         metrics: fb.metrics,
         learning: fb.learning,
-        feedback: {
-          summary: fb.summary,
-          suggestions: fb.suggestions,
-          strengths: fb.strengths,
-          outside_knowledge: fb.outside_knowledge,
-          evidence: fb.evidence,
-          usedFallback: fb.usedFallback,
-        },
+        concepts: fb.concepts,
+        teaching: fb.teaching,
+        evidence: fb.evidence,
+        usedFallback: fb.usedFallback,
+        latencies: sess.latencies || [],
       };
       updateHistory((h) => [record, ...h].slice(0, MAX_HISTORY));
       setCurrentId(record.id);
@@ -113,92 +110,93 @@ export default function Home() {
   const busy = BUSY.includes(screen);
 
   return (
-    <main className="container">
-      <header className="brand">
-        <div className="brand-left" onClick={() => !busy && setScreen('setup')}>
-          <span className="logo">teach2learn</span>
-          <span className="tagline">Learn it by teaching it.</span>
-        </div>
+    <div className="app">
+      <header className="topbar">
+        <button className="brand" onClick={() => !busy && setScreen('setup')} disabled={busy}>
+          teach2learn
+        </button>
         {!busy && (
-          <button className="btn ghost nav" onClick={openHistory}>
-            🕘 History{history.length > 0 && ` (${history.length})`}
+          <button className="btn-text" onClick={openHistory}>
+            History{history.length > 0 && <span className="count">{history.length}</span>}
           </button>
         )}
       </header>
 
-      {screen === 'setup' && <SetupScreen initial={setup} error={error} onSubmit={startNewTopic} />}
+      <main className="main">
+        {screen === 'setup' && <SetupScreen initial={setup} error={error} onSubmit={startNewTopic} />}
 
-      {screen === 'session' && (
-        <SessionScreen
-          setup={setup}
-          level={level}
-          extraction={extraction}
-          onExtraction={setExtraction}
-          onFinish={getFeedback}
-          onExit={() => setScreen(current ? 'results' : 'setup')}
-        />
-      )}
+        {screen === 'session' && (
+          <SessionScreen
+            setup={setup}
+            level={level}
+            extraction={extraction}
+            onExtraction={setExtraction}
+            onFinish={getFeedback}
+            onExit={() => setScreen(current ? 'results' : 'setup')}
+          />
+        )}
 
-      {screen === 'feedback' &&
-        (error ? (
-          <div className="card center">
-            <h2>Couldn't get feedback</h2>
-            <p className="error">{error}</p>
-            <div className="row center-row">
-              <button className="btn" onClick={() => getFeedback(pending)}>Retry</button>
-              <button className="btn ghost" onClick={() => { setError(''); setScreen('session'); }}>Teach again</button>
-            </div>
+        {screen === 'feedback' && (
+          <div className="center-block">
+            {error ? (
+              <>
+                <h2>Couldn't build feedback</h2>
+                <p className="error">{error}</p>
+                <div className="row">
+                  <button className="btn primary" onClick={() => getFeedback(pending)}>Retry</button>
+                  <button className="btn" onClick={() => { setError(''); setScreen('session'); }}>Teach again</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="spinner" aria-hidden />
+                <p className="muted">Reviewing the session…</p>
+              </>
+            )}
           </div>
-        ) : (
-          <div className="card center">
-            <div className="spinner" />
-            <h2>Reviewing your lesson…</h2>
-            <p className="muted">Looking at what your student learned and the moments that mattered.</p>
-          </div>
-        ))}
+        )}
 
-      {screen === 'results' && current && (
-        <ResultsScreen
-          entry={current}
-          attemptNumber={attemptNumber(history, current)}
-          footer={
-            <div className="row space-between">
-              <button className="btn ghost" onClick={() => setScreen('setup')}>New topic</button>
-              <button className="btn big" onClick={() => setScreen('session')}>↻ Teach it again</button>
-            </div>
-          }
-        />
-      )}
-
-      {screen === 'history' && (
-        <HistoryScreen
-          history={history}
-          saveFailed={saveFailed}
-          onOpen={(id) => { setViewingId(id); setScreen('history-detail'); }}
-          onDelete={deleteEntry}
-          onClearAll={() => { updateHistory(() => []); setCurrentId(null); }}
-          onBack={() => setScreen(returnTo === 'results' && !current ? 'setup' : returnTo)}
-        />
-      )}
-
-      {screen === 'history-detail' && viewing && (
-        <ResultsScreen
-          entry={viewing}
-          attemptNumber={attemptNumber(history, viewing)}
-          isHistory
-          footer={
-            <div className="row space-between">
-              <div className="row">
-                <button className="btn ghost" onClick={() => setScreen('history')}>← Back to history</button>
-                <button className="btn ghost" onClick={() => window.confirm('Delete this session?') && deleteEntry(viewing.id)}>Delete</button>
+        {screen === 'results' && current && (
+          <ResultsScreen
+            entry={current}
+            attemptNumber={attemptNumber(history, current)}
+            footer={
+              <div className="footer-actions">
+                <button className="btn" onClick={() => setScreen('setup')}>New topic</button>
+                <button className="btn primary" onClick={() => setScreen('session')}>Teach it again</button>
               </div>
-              {setup && viewing.topicId === setup.topicId && (
-                <button className="btn big" onClick={() => setScreen('session')}>↻ Teach it again</button>
-              )}
-            </div>
-          }
-        />
-      )}
-    </main>
+            }
+          />
+        )}
+
+        {screen === 'history' && (
+          <HistoryScreen
+            history={history}
+            saveFailed={saveFailed}
+            onOpen={(id) => { setViewingId(id); setScreen('history-detail'); }}
+            onDelete={deleteEntry}
+            onClearAll={() => { updateHistory(() => []); setCurrentId(null); }}
+            onBack={() => setScreen(returnTo === 'results' && !current ? 'setup' : returnTo)}
+          />
+        )}
+
+        {screen === 'history-detail' && viewing && (
+          <ResultsScreen
+            entry={viewing}
+            attemptNumber={attemptNumber(history, viewing)}
+            isHistory
+            footer={
+              <div className="footer-actions">
+                <button className="btn" onClick={() => setScreen('history')}>Back to history</button>
+                <button className="btn-text" onClick={() => window.confirm('Delete this session?') && deleteEntry(viewing.id)}>Delete</button>
+                {setup && viewing.topicId === setup.topicId && (
+                  <button className="btn primary" onClick={() => setScreen('session')}>Teach it again</button>
+                )}
+              </div>
+            }
+          />
+        )}
+      </main>
+    </div>
   );
 }

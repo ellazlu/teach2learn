@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { computeSpeechMetrics, countFillers } from '../lib/student/speech.ts';
-import { buildEvidence, attachEvidence, fallbackSuggestions } from '../lib/student/evidence.ts';
+import { buildEvidence, validateThree, fallbackThree, cleanText } from '../lib/student/evidence.ts';
 import { initStudentModel, applyEvaluation, learningSummary } from '../lib/student/knowledge.ts';
 import { recordQuestion } from '../lib/student/questions.ts';
 import { loadHistory, saveHistory, migrate, KEY } from '../lib/history.ts';
@@ -70,25 +70,31 @@ test('evidence is timestamped and grounded in what happened', () => {
   assert.deepEqual(ev.map((e) => e.id), ev.map((_, i) => `E${i + 1}`));
 });
 
-test('LLM suggestions without valid evidence are dropped', () => {
+test('feedback is exactly three items, each tied to valid evidence of the right kind', () => {
   const ev = buildEvidence(sessionWithIssues());
-  const kept = attachEvidence(
-    [
-      { title: 'Define thylakoid first', detail: 'At 0:42…', evidence_ids: [ev[0].id] },
-      { title: 'Try being clearer', detail: 'Generic.', evidence_ids: [] },
-      { title: 'Made up', detail: 'x', evidence_ids: ['E999'] },
-    ],
+  const good = ev.find((e) => e.positive);
+  const bad = ev.find((e) => !e.positive)!;
+  const r = validateThree(
+    {
+      went_well: { text: 'At 0:42 you did great!', evidence_id: bad.id }, // cites an issue as a strength: rejected
+      improve: { text: 'At 1:07, you used "thylakoid" without saying what it is.', evidence_id: bad.id },
+      try_next: { text: 'Define new words the first time.', evidence_id: 'E999' }, // invalid id: falls back
+    },
     ev
   );
-  assert.equal(kept.length, 1);
-  assert.equal(kept[0].evidence[0].at, ev[0].at);
+  assert.equal(r.improve!.evidence!.id, bad.id);
+  assert.doesNotMatch(r.improve!.text, /1:07/, 'invented timestamps are stripped; the app shows real ones');
+  assert.equal(r.went_well?.evidence?.positive ?? true, true);
+  if (!good) assert.equal(r.went_well, null, 'no positive evidence -> no invented praise');
+  assert.ok(r.try_next && r.try_next.text);
+  assert.equal(r.usedFallback, true);
 });
 
-test('without the LLM, suggestions still come from evidence', () => {
-  const s = fallbackSuggestions(buildEvidence(sessionWithIssues()));
-  assert.ok(s.length >= 3);
-  assert.ok(s.every((x) => x.evidence.length >= 1));
-  assert.ok(s.filter((x) => x.title === 'Cover the rest of the material').length <= 1, 'uncovered concepts are grouped');
+test('without the LLM, the three items still come from evidence', () => {
+  const f = fallbackThree(buildEvidence(sessionWithIssues()));
+  assert.ok(f.improve && f.improve.evidence);
+  assert.ok(f.try_next && f.try_next.text.length > 10);
+  assert.equal(cleanText('around 2:15, you did x'), 'You did x');
 });
 
 // ---- Persistence --------------------------------------------------------------------------
@@ -107,13 +113,23 @@ test('saved sessions restore correctly', () => {
   fakeStorage();
   const { initial, final, events, metrics, learning } = sessionWithIssues();
   const rec = {
-    version: 3 as const, id: 's-1', createdAt: '2026-11-14T20:00:00Z', topicId: 't', topicTitle: 'Photosynthesis', levelId: 'middle' as const,
+    version: 4 as const, id: 's-1', createdAt: '2026-11-14T20:00:00Z', topicId: 't', topicTitle: 'Photosynthesis', levelId: 'middle' as const,
     timeLimitSec: 120, timeUsedSec: 100, extraction: EXTRACTION, initialModel: initial, finalModel: final, events, utterances: [],
-    metrics, learning, feedback: { summary: 'ok', suggestions: [], strengths: [], outside_knowledge: [], evidence: [], usedFallback: true },
+    metrics, learning, concepts: [], teaching: { went_well: null, improve: null, try_next: null }, evidence: [], usedFallback: true, latencies: [1200],
   };
   assert.equal(saveHistory([rec]), true);
   const [back] = loadHistory();
   assert.deepEqual(back, rec);
+});
+
+test('sessions saved by the previous version (v3) stay readable', () => {
+  const data = fakeStorage();
+  data.set('teach2learn-history-v3', JSON.stringify([{ version: 3, id: 'v3', createdAt: '2026-11-14T10:00:00Z', topicId: 't', topicTitle: 'Gravity', levelId: 'high', timeLimitSec: 120, timeUsedSec: 90, utterances: [{ speaker: 'teacher', text: 'gravity pulls' }], feedback: { summary: 'Okay.', suggestions: [{ title: 'Define terms', detail: 'Say what orbit means.' }] } }]));
+  const [r] = loadHistory();
+  assert.equal(r.version, 1);
+  assert.equal(r.topicTitle, 'Gravity');
+  assert.deepEqual((r as any).suggestions, ['Define terms: Say what orbit means.']);
+  assert.match((r as any).transcript, /You: gravity pulls/);
 });
 
 test('older rubric-era sessions stay readable and deletes stick', () => {

@@ -1,7 +1,5 @@
-// End-to-end UI check with simulated speech. Usage (from the repo root):
-//   npx esbuild tests/browser/harness.jsx --bundle --loader:.js=jsx --jsx=automatic --outfile=tests/browser/out/app.js
-//   node tests/browser/run.mjs
-// Requires Playwright with Chromium (npx playwright install chromium).
+// End-to-end UI check with simulated speech, voice and API. Usage:
+//   bash tests/browser/run.sh      (needs Playwright + Chromium: npx playwright install chromium)
 
 import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
@@ -14,7 +12,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'playwright');
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..');
 
 const files = {
-  '/': ['text/html', `<!doctype html><html><head><link rel="stylesheet" href="/app.css"></head><body><div id="root"></div><script src="/app.js"></script></body></html>`],
+  '/': ['text/html', `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/app.css"></head><body><div id="root"></div><script src="/app.js"></script></body></html>`],
   '/app.js': ['text/javascript', () => readFileSync(path.join(root, 'tests/browser/out/app.js'))],
   '/app.css': ['text/css', () => readFileSync(path.join(root, 'app/globals.css'))],
 };
@@ -26,93 +24,112 @@ const server = createServer((req, res) => {
 const url = `http://localhost:${server.address().port}/`;
 
 const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
+const context = await browser.newContext({ viewport: { width: 1200, height: 900 } });
+const page = await context.newPage();
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
 const step = (s) => console.log(`✓ ${s}`);
 const say = (t) => page.evaluate((x) => window.__teacherSays(x), t);
-const shot = (name) => page.screenshot({ path: path.join(root, `tests/browser/out/${name}.png`), fullPage: true });
+const shot = (name, p = page) => p.screenshot({ path: path.join(root, `tests/browser/out/${name}.png`), fullPage: true });
+const ttsCount = () => page.evaluate(() => window.__ttsCalls.length);
+const waitTts = (n) => page.waitForFunction((k) => window.__ttsCalls.length >= k, n, { timeout: 8000 });
 
 try {
   await page.goto(url);
+  await shot('0-setup');
   await page.fill('.topic-input', 'Photosynthesis');
-  await page.click('text=Middle schooler');
-  await page.click('text=1 min');
+  await page.click('.segmented button:has-text("Middle schooler")');
+  await page.click('.segmented button:has-text("2 min")');
   await page.click('button:has-text("Start session")');
   await page.waitForSelector('.session-bar');
-  step('Start session goes straight into a live session');
-
   assert.equal(await page.evaluate(() => window.__rec.active), true);
-  step('microphone started without an extra page');
+  step('Start session goes straight into a live session; mic on');
 
-  // Teacher explains (>= 25 words -> one stable segment).
-  await say('okay so today we are learning photosynthesis which is how plants make their own food using sunlight water and carbon dioxide from the air kind of like a little kitchen inside the thylakoid');
-  await page.waitForSelector('.speech-bubble.live', { timeout: 5000 });
-  const bubble = await page.textContent('.speech-bubble');
-  assert.match(bubble, /eat dirt/);
-  assert.ok(await page.$('.avatar.behavior-responding'));
-  assert.deepEqual(await page.evaluate(() => window.__calls.speak), ['misconception']);
-  step(`student interrupted with a misconception chosen by code: "${bubble.replace('skip', '').trim()}"`);
-  await shot('1-student-asks');
-
-  // Mic is paused while the student talks; speech now is dropped (not transcribed as teacher).
+  // 1) Teacher explains; student objects with its misconception, quickly.
+  await page.waitForTimeout(300);
+  await say('okay so today is photosynthesis, plants make their own food using sunlight water and air, kind of like a kitchen inside the thylakoid');
+  await waitTts(1);
+  const firstReplyMs = await page.evaluate(() => window.__ttsCalls[0].at - window.__finalAt);
+  const first = await page.evaluate(() => window.__ttsCalls[0].text);
+  assert.match(first, /eat dirt/);
+  assert.deepEqual(await page.evaluate(() => window.__calls.reply), ['misconception']);
+  step(`student replied to what was just said, ${Math.round(firstReplyMs)} ms after the teacher's speech ended (simulated APIs)`);
+  assert.equal(await page.evaluate(() => window.__ttsCalls[0].voice), 'Google US English', 'natural browser voice chosen over the default');
+  await page.waitForSelector('.avatar.b-responding');
   assert.equal(await page.evaluate(() => window.__rec.active), false);
-  assert.equal(await say("wait but don't plants eat dirt"), false);
-  step('mic paused while the student speaks (its voice is never transcribed as the teacher)');
+  assert.equal(await say('wait but dont plants eat dirt'), false);
+  step('mic paused while the student talks (its voice is never transcribed)');
+  await shot('1-student-talks');
+  await page.waitForFunction(() => window.__rec?.active, null, { timeout: 8000 });
+  step('back to listening after the student finishes');
 
-  await page.waitForSelector('.speech-bubble:not(.live)', { timeout: 5000 });
-  await page.waitForFunction(() => window.__rec.active, null, { timeout: 3000 });
-  assert.ok(await page.$('.avatar.behavior-listening'));
-  step('back to listening; mic resumed');
+  // 2) Teacher answers; student reacts to the answer (not a new disconnected question).
+  await say('no, actually the soil only gives water and minerals, the food is sugar made in the leaves using light from the sun');
+  await waitTts(3);
+  assert.equal((await page.evaluate(() => window.__calls.reply))[1], 'react_to_answer');
+  await page.waitForFunction(() => document.querySelector('.panel')?.textContent.includes('Corrected'), null, { timeout: 8000 });
+  step('student reacted to the answer; background evaluation marked the misconception corrected');
+  await page.waitForFunction(() => window.__rec?.active, null, { timeout: 8000 });
 
-  // Panel shows the model; misconception is active.
-  await page.click('.panel-toggle');
-  const before = await page.textContent('.student-panel');
-  assert.match(before, /believes it/);
-  assert.match(before, /What photosynthesis is/);
-  step('understanding panel shows concepts, mastery and the active misconception');
-
-  // A simulated API outage keeps state and the session continues.
-  const masteryBefore = await page.textContent('.concept-bar');
+  // 3) Background evaluation failure doesn't stop the conversation.
   await page.evaluate(() => (window.__failNextEvaluate = true));
-  await say('this sentence is filler to test what happens when the evaluation service fails for a moment during the lesson okay');
-  await page.waitForTimeout(800);
-  assert.equal(await page.textContent('.concept-bar'), masteryBefore);
-  step('a failed evaluation leaves the student state unchanged');
+  await say('and plants also need carbon dioxide from the air which goes in through tiny holes in the leaves');
+  await page.waitForTimeout(1800);
+  assert.match(await page.textContent('.debug'), /conversation unaffected|following along|letting the teacher continue/);
+  step('a failed background evaluation leaves the conversation running');
 
-  // Teacher answers the question -> misconception resolved, question answered.
-  await say('no actually the soil only gives water and minerals but the food is sugar made in the leaves using light from the sun does that make sense');
-  await page.waitForFunction(() => document.querySelector('.student-panel')?.textContent.includes('resolved'), null, { timeout: 5000 });
-  step('teacher correction resolved the misconception (deterministic update)');
-  await shot('2-panel-after-correction');
+  // 4) Teacher checks understanding -> student explains back -> verified.
+  await page.waitForFunction(() => window.__rec?.active, null, { timeout: 8000 });
+  const before = await ttsCount();
+  await say('so plants make their own food from light, does that make sense');
+  await waitTts(before + 1);
+  assert.ok((await page.evaluate(() => window.__calls.reply)).includes('explain_back'));
+  await page.waitForFunction(() => document.querySelector('.panel')?.textContent.includes('Demonstrated'), null, { timeout: 8000 });
+  step('teacher checked understanding -> student explained it back -> verified as demonstrated');
+  await shot('2-session');
 
-  // End the session -> feedback.
+  // 5) End -> concise feedback.
   await page.click('button:has-text("End session")');
-  await page.waitForSelector('text=What your student learned', { timeout: 10000 });
+  await page.waitForSelector('.results', { timeout: 15000 });
   const results = await page.textContent('main');
-  assert.match(results, /How to teach this better/);
-  assert.match(results, /Resolved/);
-  assert.match(results, /How you spoke/);
-  assert.match(results, /thylakoid/, 'suggestion cites the undefined term');
-  assert.ok((await page.$$('.evidence .ts')).length > 0, 'suggestions carry timestamps');
-  assert.doesNotMatch(results, /rubric|score/i);
-  step('results: learning summary, evidence-cited suggestions with timestamps, speech metrics, no rubric');
+  for (const s of ['Your teaching', 'What went well', 'What to improve', 'Try next time', 'Student understanding', 'Demonstrated understanding', 'Not yet verified']) {
+    assert.ok(results.includes(s), `results include "${s}"`);
+  }
+  assert.doesNotMatch(results, /rubric|score|\d+%\s*(mastery)/i);
+  assert.equal(await page.$$eval('.three-item', (n) => n.length), 3);
+  assert.equal(await page.textContent('.stats .stat:nth-child(4) .stat-v'), '1', 'the check-in was counted');
+  const q = await page.$eval('.evidence q', (el) => getComputedStyle(el, '::before').content);
+  assert.equal(q, 'open-quote');
+  step('feedback: exactly three teaching items + concept summary with the three verification labels');
   await shot('3-results');
 
-  // Persistence across reload.
+  // 6) Persistence.
   await page.reload();
   await page.click('button:has-text("History")');
   await page.click('.history-open');
-  await page.waitForSelector('text=What your student learned');
-  step('session restored from history after a page reload');
+  await page.waitForSelector('.results');
+  step('session restored from history after reload');
+
+  // 7) Mobile layout.
+  const mobile = await page.context().newPage();
+  await mobile.setViewportSize({ width: 390, height: 844 });
+  await mobile.goto(url);
+  await mobile.click('button:has-text("History")');
+  await mobile.click('.history-open');
+  await mobile.waitForSelector('.results');
+  const overflow = await mobile.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  assert.ok(overflow <= 1, `no horizontal overflow on mobile (${overflow}px)`);
+  await shot('4-mobile-results', mobile);
+  step('mobile layout has no horizontal overflow');
 
   assert.deepEqual(errors, [], `page errors: ${errors.join('\n')}`);
   step('no console errors');
-  console.log('\nALL BROWSER CHECKS PASSED');
+  console.log(`\nLATENCY first reply: ${Math.round(firstReplyMs)} ms`);
+  console.log('ALL BROWSER CHECKS PASSED');
 } catch (e) {
   await shot('failure');
-  console.error('FAILED:', e.message, '\nerrors:', errors, '\nlog:', await page.evaluate(() => window.__log).catch(() => ''));
+  console.error('FAILED:', e.message, '\nerrors:', errors, '\nlog:', (await page.evaluate(() => window.__log).catch(() => [])).slice(-30));
   process.exitCode = 1;
 } finally {
   await browser.close();

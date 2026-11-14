@@ -4,157 +4,213 @@ import { SessionEngine, type EngineDeps } from '../lib/student/engine.ts';
 import { EXTRACTION, proposal } from './fixtures.ts';
 import type { EvaluationProposal } from '../lib/student/types.ts';
 
-const tick = () => new Promise((r) => setTimeout(r, 0));
-async function settle(n = 10) {
-  for (let i = 0; i < n; i++) await tick();
-}
+const flush = async (n = 15) => {
+  for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0));
+};
 
-function harness(over: Partial<EngineDeps> = {}) {
-  let clock = 0;
-  const calls = { evaluate: [] as any[], speak: [] as any[], say: [] as string[], maxConcurrent: 0 };
-  let inFlight = 0;
-  let nextProposal: EvaluationProposal | Error = proposal();
+function harness(over: Partial<EngineDeps> = {}, opts: { evalNever?: boolean; verdict?: string } = {}) {
+  let t = 0;
+  const calls = { evaluate: [] as any[], verify: [] as any[], reply: [] as any[], sentences: [] as string[], replyDoneAt: [] as number[] };
+  const h = {
+    calls,
+    setClock: (v: number) => (t = v),
+    replyText: ["Wait, don't plants get food from the soil?"] as string[],
+    nextEval: proposal() as EvaluationProposal,
+    engine: null as unknown as SessionEngine,
+  };
   const deps: EngineDeps = {
-    now: () => clock,
-    seed: 1,
-    evaluate: async (body) => {
-      calls.evaluate.push(body);
-      inFlight++;
-      calls.maxConcurrent = Math.max(calls.maxConcurrent, inFlight);
-      await tick();
-      inFlight--;
-      if (nextProposal instanceof Error) throw nextProposal;
-      return nextProposal;
+    now: () => t,
+    timeLimitSec: 120,
+    seed: 3,
+    evaluate: (b) => {
+      calls.evaluate.push(b);
+      return opts.evalNever ? new Promise(() => {}) : Promise.resolve(h.nextEval);
     },
-    speak: async (body) => {
-      calls.speak.push(body);
-      return { text: 'Wait, but don\'t plants eat dirt?' };
+    verify: async (b) => {
+      calls.verify.push(b);
+      return { verdict: (opts.verdict || 'demonstrated') as any, note: 'Got the key idea.' };
     },
-    say: async (text) => {
-      calls.say.push(text);
-      const start = clock;
-      clock += 3;
-      return { start, end: clock };
+    reply: async (body, onText, signal) => {
+      calls.reply.push(body);
+      let full = '';
+      for (const chunk of h.replyText) {
+        await new Promise((r) => setTimeout(r, 0));
+        if (signal.aborted) throw new Error('aborted');
+        full += chunk;
+        onText(chunk);
+      }
+      calls.replyDoneAt.push(calls.sentences.length);
+      return full;
+    },
+    voice: {
+      begin: async () => {},
+      sentence: async (text) => {
+        calls.sentences.push(text);
+        const start = t + 2; // audio starts 2s after the teacher stopped at t=5 below
+        return { start, end: start + 1 };
+      },
+      end: () => {},
+      cancel: () => {},
     },
     ...over,
   };
-  const engine = new SessionEngine('middle', deps);
-  return {
-    engine,
-    calls,
-    setClock: (t: number) => (clock = t),
-    setProposal: (p: EvaluationProposal | Error) => (nextProposal = p),
-  };
+  h.engine = new SessionEngine('middle', deps);
+  return h;
 }
 
-const LONG = 'so plants make their own food using sunlight water and carbon dioxide from the air and that whole process happens inside the green leaves of the plant';
+const EXPLAIN = 'so plants make their own food from sunlight water and carbon dioxide';
 
-test('speech before the model is ready is queued, then evaluated', async () => {
-  const h = harness();
-  h.engine.onTeacherFinal(LONG, 1, 6);
-  await settle();
-  assert.equal(h.calls.evaluate.length, 0);
-  h.engine.setExtraction(EXTRACTION);
-  await settle();
-  assert.equal(h.calls.evaluate.length, 1);
-  assert.match(h.calls.evaluate[0].segment, /plants make their own food/);
-});
-
-test('evaluations never overlap; queued segments are merged', async () => {
+test("the student replies at the end of the teacher's turn, not mid-sentence", async () => {
   const h = harness();
   h.engine.setExtraction(EXTRACTION);
-  for (let i = 0; i < 5; i++) h.engine.onTeacherFinal(LONG, i * 10, i * 10 + 6);
-  await settle(30);
-  assert.equal(h.calls.maxConcurrent, 1);
-  assert.ok(h.calls.evaluate.length < 5, `merged into ${h.calls.evaluate.length} calls`);
-  const all = h.calls.evaluate.map((c) => c.segment).join(' ');
-  assert.equal(all.split('plants make their own food').length - 1, 5, 'every segment evaluated exactly once');
-});
-
-test('a failed evaluation keeps the previous state and the session continues', async () => {
-  const h = harness();
-  h.engine.setExtraction(EXTRACTION);
-  const before = JSON.stringify(h.engine.model);
-  h.setProposal(new Error('network down'));
-  h.engine.onTeacherFinal(LONG, 1, 6);
-  await settle(20);
-  assert.equal(JSON.stringify(h.engine.model), before);
-  assert.match(h.engine.snapshot().lastError, /network down/);
-  assert.equal(h.calls.evaluate.length, 2, 'retried once, then dropped');
-  h.setProposal(proposal({ concepts: [{ concept_id: 'c2', explained: false, correctness: 'correct', clarity: 'clear', level_fit: 'appropriate', used_example: false, quote: 'green leaves of the plant' }] }));
-  h.engine.onTeacherFinal(LONG, 20, 26);
-  await settle(20);
-  assert.equal(h.engine.model!.concepts.find((c) => c.id === 'c2')!.mentioned, true, 'later segments still work');
-});
-
-test('the student asks, the mic echo is ignored, and an answer resolves the question', async () => {
-  const h = harness();
-  h.engine.setExtraction(EXTRACTION);
-  h.setClock(40);
-  h.setProposal(proposal({ concepts: [{ concept_id: 'c1', explained: true, correctness: 'partially_correct', clarity: 'somewhat_clear', level_fit: 'appropriate', used_example: false, quote: 'plants make their own food using sunlight' }] }));
-  h.engine.onTeacherFinal(LONG, 30, 40);
-  await settle(30);
-  assert.equal(h.calls.say.length, 1, 'student spoke once');
-  assert.equal(h.calls.speak[0].intent, 'misconception', 'code chose the intent, not the LLM');
-  const m = h.engine.model!;
-  assert.equal(m.questions.length, 1);
-  assert.equal(m.misconceptions.find((x) => x.id === 'm1')!.expressed, true);
-
-  // The student's own voice leaking into the mic is dropped.
-  h.engine.onTeacherFinal("wait but don't plants eat dirt", 44, 46);
-  assert.equal(h.engine.utterances.filter((u) => u.speaker === 'teacher').length, 1);
-
-  // Teacher answers.
-  h.setProposal(proposal({
-    misconceptions: [{ misconception_id: 'm1', effect: 'corrected', quote: 'no the soil only gives water and minerals' }],
-    question_response: { quality: 'full', quote: 'no the soil only gives water and minerals' },
-  }));
-  h.engine.onTeacherFinal('no the soil only gives water and minerals but the food itself is sugar made in the leaves using light energy from the sun', 50, 58);
-  await settle(5);
-  assert.equal(h.engine.model!.questions[0].status, 'pending', '24 words: waits for a pause before evaluating');
-  h.setClock(61); // teacher pauses for 3s
+  h.engine.onTeacherFinal(EXPLAIN, 1, 5);
+  h.setClock(5.5);
   h.engine.tick();
-  await settle(30);
-  const after = h.engine.model!;
-  assert.equal(after.questions[0].status, 'answered');
-  assert.equal(after.misconceptions.find((x) => x.id === 'm1')!.status, 'resolved');
-  assert.ok(h.engine.utterances.some((u) => u.speaker === 'student' && u.end - u.start === 3), 'student timing comes from the speech callback');
+  await flush();
+  assert.equal(h.calls.reply.length, 0, 'only 0.5s of silence: keep listening');
+  h.setClock(6);
+  h.engine.tick();
+  await flush();
+  assert.equal(h.calls.reply.length, 1, '0.9s+ of silence: reply');
+  assert.equal(h.calls.reply[0].teacherJustSaid, EXPLAIN, 'replies to exactly what was just said');
+  assert.match(h.calls.reply[0].knowledge, /You believe: "Plants get their food from the soil\."/);
 });
 
-test('no second interjection while the student is still speaking', async () => {
-  let release: (() => void) | null = null;
-  const h = harness({
-    say: (text) =>
-      new Promise((resolve) => {
-        h.calls.say.push(text);
-        release = () => resolve({ start: 40, end: 43 });
-      }),
-  });
+test('the reply never waits for the background knowledge evaluation', async () => {
+  const h = harness({}, { evalNever: true });
   h.engine.setExtraction(EXTRACTION);
-  h.setClock(40);
-  h.setProposal(proposal({ concepts: [{ concept_id: 'c1', explained: true, correctness: 'partially_correct', clarity: 'somewhat_clear', level_fit: 'appropriate', used_example: false, quote: 'plants make their own food using sunlight' }] }));
-  h.engine.onTeacherFinal(LONG, 30, 40);
-  await settle(30);
-  assert.equal(h.engine.snapshot().speaking, true);
-  assert.equal(h.engine.snapshot().behavior, 'responding');
-  assert.equal(h.engine.decide().kind, 'none');
-  h.engine.onTeacherFinal('and the leaves are green', 39, 41); // started before the student spoke: kept
-  h.engine.onTeacherFinal(LONG, 41, 42); // started while the student was speaking: ignored
-  assert.equal(h.engine.utterances.filter((u) => u.speaker === 'teacher').length, 2);
-  await settle(30);
-  assert.equal(h.calls.say.length, 1);
-  release!();
-  await settle(10);
-  assert.equal(h.engine.snapshot().behavior, 'listening');
+  h.engine.onTeacherFinal(EXPLAIN, 1, 5);
+  h.setClock(6);
+  h.engine.tick();
+  await flush();
+  assert.ok(h.calls.evaluate.length >= 1, 'evaluation started');
+  assert.equal(h.calls.reply.length, 1, 'reply went ahead while the evaluation is still pending');
+  assert.equal(h.calls.sentences.length, 1);
 });
 
-test('finish waits for the last evaluation and blocks new actions', async () => {
+test('audio starts on the first sentence while the reply is still streaming', async () => {
+  const h = harness();
+  h.replyText = ['Wait, ', "don't plants get food ", 'from the soil? ', 'I thought ', 'they eat dirt.'];
+  h.engine.setExtraction(EXTRACTION);
+  h.engine.onTeacherFinal(EXPLAIN, 1, 5);
+  h.setClock(5.9);
+  h.engine.tick();
+  await flush(40);
+  assert.deepEqual(h.calls.sentences, ["Wait, don't plants get food from the soil?", 'I thought they eat dirt.']);
+  assert.ok(h.calls.replyDoneAt[0] >= 1, 'the first sentence reached the voice before the stream finished');
+  assert.deepEqual(h.engine.latencies, [2900], 'latency = audio start (7.9s) - end of teacher speech (5s)');
+});
+
+test('if the teacher keeps talking, the half-formed reply is dropped (no talking over them)', async () => {
+  const h = harness();
+  h.replyText = ['Wait, ', 'what?'];
+  h.engine.setExtraction(EXTRACTION);
+  h.engine.onTeacherFinal(EXPLAIN, 1, 5);
+  h.setClock(6);
+  h.engine.tick();
+  h.engine.onTeacherInterim(); // teacher starts again before any audio
+  await flush(30);
+  assert.equal(h.calls.sentences.length, 0);
+  assert.equal(h.engine.utterances.filter((u) => u.speaker === 'student').length, 0);
+  h.engine.onTeacherFinal('and the leaves are where it happens', 6.5, 8);
+  h.setClock(9);
+  h.engine.tick();
+  await flush(30);
+  assert.match(h.calls.reply[1].teacherJustSaid, /carbon dioxide and the leaves are where it happens/, 'the dropped turn is kept and answered together');
+});
+
+test('short fragments get no reply', async () => {
   const h = harness();
   h.engine.setExtraction(EXTRACTION);
-  h.engine.onTeacherFinal('plants are cool', 1, 2); // too short to flush on its own
-  await settle();
-  assert.equal(h.calls.evaluate.length, 0);
-  await h.engine.finish(1000);
-  assert.equal(h.calls.evaluate.length, 1, 'remaining words were flushed and evaluated');
-  assert.equal(h.calls.speak.length, 0);
+  h.engine.onTeacherFinal('um so', 1, 2);
+  h.setClock(3);
+  h.engine.tick();
+  await flush();
+  assert.equal(h.calls.reply.length, 0);
+  assert.match(h.engine.snapshot().lastDecision, /still getting going/);
+});
+
+test('when the teacher asks the student a question, it always answers, and the answer is verified', async () => {
+  const h = harness();
+  h.replyText = ['Um, I think plants get food from the soil?'];
+  h.engine.setExtraction(EXTRACTION);
+  h.engine.onTeacherFinal('so what do you think plants need to make their food', 1, 5);
+  h.setClock(6);
+  h.engine.tick();
+  await flush(30);
+  assert.equal(h.calls.reply[0].intent, 'answer_content');
+  assert.equal(h.calls.verify.length, 1);
+  assert.equal(h.calls.verify[0].mode, 'answer');
+});
+
+test('near the end the student explains back, and a correct one is marked demonstrated', async () => {
+  const h = harness();
+  h.replyText = ['So basically plants make sugar from light, water and air? Did I get it?'];
+  h.nextEval = proposal({
+    concepts: [{ concept_id: 'c1', explained: true, correctness: 'correct', clarity: 'clear', level_fit: 'appropriate', used_example: false, quote: 'plants make their own food', gap: '' }],
+    misconceptions: [{ misconception_id: 'm1', effect: 'corrected', quote: 'plants make their own food' }],
+  });
+  const e = h.engine;
+  e.setExtraction(EXTRACTION);
+  e.onTeacherFinal(EXPLAIN + ' and that is why plants make their own food and do not eat soil', 60, 70);
+  await flush(20); // background evaluation lands before the turn ends
+  h.setClock(71);
+  e.tick();
+  await flush(40);
+  assert.equal(h.calls.reply[0].intent, 'explain_back', `got ${h.calls.reply[0].intent}`);
+  assert.equal(h.calls.verify[0].mode, 'explain_back');
+  assert.equal(e.model!.concepts.find((c) => c.id === 'c1')!.verification, 'demonstrated');
+  assert.ok(e.events.some((x) => x.type === 'demonstration' && x.verdict === 'demonstrated'));
+});
+
+test('a vague first sentence is replaced before any audio plays', async () => {
+  const h = harness();
+  h.replyText = ['Can you explain it another way? ', 'I am lost.'];
+  h.engine.setExtraction(EXTRACTION);
+  h.engine.onTeacherFinal(EXPLAIN, 1, 5); // unvoiced misconception m1 -> code chooses a misconception question
+  h.setClock(6);
+  h.engine.tick();
+  await flush(30);
+  assert.equal(h.calls.reply[0].intent, 'misconception');
+  assert.deepEqual(h.calls.sentences, ['Wait, but I thought plants get their food from the soil?']);
+});
+
+test("the student's own voice is never treated as teacher speech", async () => {
+  const h = harness();
+  h.engine.setExtraction(EXTRACTION);
+  h.engine.onTeacherFinal(EXPLAIN, 1, 5);
+  h.setClock(6);
+  h.engine.tick();
+  await flush(30);
+  h.engine.onTeacherFinal("wait don't plants get food from the soil", 9, 10);
+  assert.equal(h.engine.utterances.filter((u) => u.speaker === 'teacher').length, 1);
+});
+
+test('a failed evaluation leaves the knowledge model unchanged and the conversation continues', async () => {
+  const h = harness({ evaluate: async () => { throw new Error('down'); } });
+  h.engine.setExtraction(EXTRACTION);
+  const concepts = JSON.stringify(h.engine.model!.concepts);
+  h.engine.onTeacherFinal(EXPLAIN, 1, 5);
+  h.setClock(6);
+  h.engine.tick();
+  await flush(30);
+  assert.equal(JSON.stringify(h.engine.model!.concepts), concepts);
+  assert.equal(h.calls.reply.length, 1, 'still replied');
+  assert.match(h.engine.snapshot().lastError, /conversation unaffected/);
+});
+
+test('finish waits for background verification', async () => {
+  let release: (() => void) | null = null;
+  const h = harness({ verify: () => new Promise((r) => (release = () => r({ verdict: 'partial', note: 'missing the role of light' }))) });
+  h.replyText = ['Plants just need water, right?'];
+  h.engine.setExtraction(EXTRACTION);
+  h.engine.onTeacherFinal('what do you think plants need to make food', 1, 5);
+  h.setClock(6);
+  h.engine.tick();
+  await flush(30);
+  const done = h.engine.finish(2000);
+  await flush();
+  release!();
+  await done;
+  assert.equal(h.engine.model!.concepts.find((c) => c.id === 'c1')!.verification, 'partial');
 });

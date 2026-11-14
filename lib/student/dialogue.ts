@@ -17,7 +17,7 @@ const GENERIC: RegExp[] = [
 ];
 
 const STOP = new Set(
-  'about after again also because been before being could does doing done from have here into just like more most much only other really should some such than that their them then there these they thing things this those through very what when where which while will with would your youre dont doesnt isnt cant wont sorry okay quite sort kind still mean means explain another different right wait maybe actually get gets got understand know think said says'.split(' ')
+  'about after again also because been before being could does doing done from have here into just like more most much only other really should some such than that their them then there these they thing things this those through very what when where which while will with would your youre dont doesnt isnt cant wont sorry okay quite sort kind still mean means explain another different right wait maybe actually get gets got understand know think said says make made makes uses used give gives take takes need needs come comes goes going thing also each'.split(' ')
 );
 
 export function contentWords(s: string): Set<string> {
