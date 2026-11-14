@@ -300,7 +300,7 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
 
       <div className="session-grid">
         <section className="stage">
-          <Avatar behavior={behavior} speaking={speaking} thinking={!!snap?.thinking} />
+          <Avatar behavior={behavior} speaking={speaking} thinking={!!snap?.thinking} level={level.id} />
           <p className="stage-status">
             {micState === 'on' && !speaking && phase === 'live' && <span className="live-dot" aria-hidden />}
             {status}

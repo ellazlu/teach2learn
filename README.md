@@ -69,11 +69,11 @@ There are exactly three items about your teaching (**What went well / What to im
 | Persistence (localStorage, v4 + migration) | `lib/history.ts` |
 
 ## Avatar
-Your hand-drawn art goes in `public/avatar/`. Drop in the frames and list them in `public/avatar/avatar.json`; `public/avatar/README.md` has the frame list and export specs.
+Each level can have its own character: put its frames in `public/avatar/<level>/` (kindergarten, middle, high, college, expert) and list them in that folder's `avatar.json`. Levels without their own art use the shared character in `public/avatar/`. `public/avatar/README.md` has the frame list and export specs.
 - **Frames:** `listening` (required), `listening-blink`, `curious`, `confused`, `understanding`, `challenging`, `talking-1`, `talking-2`.
-- **Fallbacks:** a missing expression shows `listening`. With no art listed, the built-in placeholder face is used, so frames can be added one at a time.
+- **Fallbacks:** a missing expression shows that character's `listening` frame (characters are never mixed). With no art at all, the built-in placeholder face is used, so frames can be added one at a time.
 - **Animation:** talking frames alternate while the student's voice plays, and the blink frame flashes every few seconds.
-- **Code:** frame selection is in `lib/avatar.js`, the component in `components/Avatar.js`. The rest of the app only passes `behavior`, `speaking` and `thinking`.
+- **Code:** frame selection is in `lib/avatar.js`, the component in `components/Avatar.js`. The rest of the app only passes `behavior`, `speaking`, `thinking` and `level`.
 
 ## Testing
 

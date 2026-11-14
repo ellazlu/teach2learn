@@ -1,7 +1,22 @@
 # Avatar art
 
-Drop your hand-drawn frames in this folder and list them in `avatar.json`.
-Until a frame exists, the app uses a fallback, so you can add them one at a time.
+Each level can have its own character:
+
+```
+public/avatar/
+├── avatar.json            ← shared default character (used by any level without its own art)
+├── kindergarten/avatar.json
+├── middle/avatar.json
+├── high/avatar.json
+├── college/avatar.json
+└── expert/avatar.json
+```
+
+Put a character's frames in its folder and list them in that folder's `avatar.json`.
+A level uses its own character as soon as its folder has a `listening` frame; until then it
+uses the shared default (this folder), and with no art at all, the built-in placeholder face.
+Characters are never mixed: a missing expression falls back to the same character's
+`listening` frame.
 
 ## Frames
 

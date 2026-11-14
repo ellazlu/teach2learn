@@ -21,11 +21,16 @@ function png(r, g, b, size = 64) {
   const row = Buffer.concat([Buffer.from([0]), Buffer.from(Array.from({ length: size }, () => [r, g, b]).flat())]);
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(Buffer.concat(Array(size).fill(row)))), chunk('IEND', Buffer.alloc(0))]);
 }
+// The middle-school character has its own frames; other levels use the shared default.
 const AVATAR_FRAMES = { listening: [200, 200, 200], confused: [240, 160, 60], 'talking-1': [60, 120, 240], 'talking-2': [140, 180, 250] };
+const manifest = (frames) => ['application/json', JSON.stringify({ format: 'png', frames })];
 
 const files = {
-  '/avatar/avatar.json': ['application/json', JSON.stringify({ format: 'png', frames: Object.keys(AVATAR_FRAMES) })],
-  ...Object.fromEntries(Object.entries(AVATAR_FRAMES).map(([n, c]) => [`/avatar/${n}.png`, ['image/png', png(...c)]])),
+  '/avatar/avatar.json': manifest(['listening']),
+  '/avatar/listening.png': ['image/png', png(120, 120, 120)],
+  '/avatar/middle/avatar.json': manifest(Object.keys(AVATAR_FRAMES)),
+  ...Object.fromEntries(Object.entries(AVATAR_FRAMES).map(([n, c]) => [`/avatar/middle/${n}.png`, ['image/png', png(...c)]])),
+  ...Object.fromEntries(['kindergarten', 'high', 'college', 'expert'].map((l) => [`/avatar/${l}/avatar.json`, manifest([])])),
   '/': ['text/html', `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/app.css"></head><body><div id="root"></div><script src="/app.js"></script></body></html>`],
   '/app.js': ['text/javascript', () => readFileSync(path.join(root, 'tests/browser/out/app.js'))],
   '/app.css': ['text/css', () => readFileSync(path.join(root, 'app/globals.css'))],
@@ -59,8 +64,8 @@ try {
   await page.waitForSelector('.session-bar');
   assert.equal(await page.evaluate(() => window.__rec.active), true);
   step('Start session goes straight into a live session; mic on');
-  await page.waitForSelector('.avatar.has-art img[src="/avatar/listening.png"]');
-  step('avatar uses the hand-drawn frames from public/avatar (listening frame)');
+  await page.waitForSelector('.avatar.has-art img[src="/avatar/middle/listening.png"]');
+  step("avatar uses the middle-school character's own frames");
   const seen = new Set();
   const watch = setInterval(() => page.$eval('.av-img', (i) => i.getAttribute('src')).then((x) => seen.add(x)).catch(() => {}), 40);
 
@@ -77,7 +82,7 @@ try {
   await page.waitForSelector('.avatar.b-responding');
   await page.waitForTimeout(400);
   clearInterval(watch);
-  assert.ok(seen.has('/avatar/talking-1.png') && seen.has('/avatar/talking-2.png'), `talking frames alternate while speaking (saw ${[...seen]})`);
+  assert.ok(seen.has('/avatar/middle/talking-1.png') && seen.has('/avatar/middle/talking-2.png'), `talking frames alternate while speaking (saw ${[...seen]})`);
   step('talking frames alternate while the student speaks');
   assert.equal(await page.evaluate(() => window.__rec.active), false);
   assert.equal(await say('wait but dont plants eat dirt'), false);
@@ -133,9 +138,19 @@ try {
   await page.waitForSelector('.results');
   step('session restored from history after reload');
 
-  // 7) No art yet -> placeholder face, and a missing expression falls back to listening.
+  // 7) A level without its own art uses the shared character.
+  const hs = await context.newPage();
+  await hs.goto(url);
+  await hs.fill('.topic-input', 'Photosynthesis');
+  await hs.click('.segmented button:has-text("High schooler")');
+  await hs.click('button:has-text("Start session")');
+  await hs.waitForSelector('.avatar.has-art img[src="/avatar/listening.png"]');
+  await hs.close();
+  step('a level without its own art uses the shared default character');
+
+  // 8) No art anywhere -> placeholder face.
   const bare = await context.newPage();
-  await bare.route('**/avatar/avatar.json', (r) => r.fulfill({ contentType: 'application/json', body: '{"format":"png","frames":[]}' }));
+  await bare.route('**/avatar/**avatar.json', (r) => r.fulfill({ contentType: 'application/json', body: '{"format":"png","frames":[]}' }));
   await bare.goto(url);
   await bare.fill('.topic-input', 'Photosynthesis');
   await bare.click('button:has-text("Start session")');
@@ -144,7 +159,7 @@ try {
   await bare.close();
   step('with no art listed, the built-in placeholder face is used');
 
-  // 8) Mobile layout.
+  // 9) Mobile layout.
   const mobile = await page.context().newPage();
   await mobile.setViewportSize({ width: 390, height: 844 });
   await mobile.goto(url);

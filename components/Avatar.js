@@ -3,14 +3,15 @@
 import { useEffect, useState } from 'react';
 import { loadFrames, pickFrame } from '../lib/avatar';
 
-// The student avatar. Uses your hand-drawn frames from public/avatar/ (listed
-// in public/avatar/avatar.json, see the README there); falls back to the
-// built-in placeholder face until a `listening` frame exists.
+// The student avatar. Uses the hand-drawn character for the current level
+// (public/avatar/<level>/), else the shared one (public/avatar/), else the
+// built-in placeholder face. See public/avatar/README.md.
 //
 // Props (the rest of the app only uses these):
 //   behavior: 'listening' | 'curious' | 'confused' | 'understanding' | 'challenging' | 'responding'
 //   speaking: true while the student's voice is playing (alternates talking frames)
 //   thinking: true while the student is forming a reply
+//   level:    level id ('kindergarten' | 'middle' | 'high' | 'college' | 'expert')
 
 const LABELS = {
   listening: 'Listening',
@@ -27,7 +28,7 @@ export function behaviorLabel(behavior) {
 
 const TALK_FPS = 7;
 
-export default function Avatar({ behavior = 'listening', speaking = false, thinking = false }) {
+export default function Avatar({ behavior = 'listening', speaking = false, thinking = false, level }) {
   const [frames, setFrames] = useState(null);
   const [talkFrame, setTalkFrame] = useState(0);
   const [blink, setBlink] = useState(false);
@@ -35,11 +36,11 @@ export default function Avatar({ behavior = 'listening', speaking = false, think
 
   useEffect(() => {
     let alive = true;
-    loadFrames().then((f) => alive && setFrames(f));
+    loadFrames(level).then((f) => alive && setFrames(f));
     return () => {
       alive = false;
     };
-  }, []);
+  }, [level]);
 
   // Alternate mouth frames while speaking.
   useEffect(() => {

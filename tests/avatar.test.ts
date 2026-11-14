@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { framesFromManifest, pickFrame } from '../lib/avatar.js';
+import { framesFromManifest, pickFrame, chooseSet } from '../lib/avatar.js';
 
 test('manifest lists frames; unknown names are ignored; formats can mix', () => {
   const f = framesFromManifest({ format: 'webp', frames: ['listening', 'confused.png', 'dancing', 'talking-1'] });
@@ -22,4 +22,14 @@ test('missing frames fall back sensibly', () => {
   assert.equal(pickFrame(some, 'listening', 0, true), 'L', 'no blink frame -> no blink');
   assert.equal(pickFrame({ ...some, 'listening-blink': 'B' }, 'listening', 0, true), 'B');
   assert.equal(pickFrame({ confused: 'C' }, 'confused'), null, 'the listening frame is required');
+});
+
+test('each level uses its own character, else the shared one, never a mix', () => {
+  const kid = framesFromManifest({ frames: ['listening', 'confused'] }, '/avatar/kindergarten');
+  assert.equal(kid.listening, '/avatar/kindergarten/listening.png');
+  const shared = { listening: '/avatar/listening.png', curious: '/avatar/curious.png' };
+  assert.equal(chooseSet(kid, shared), kid);
+  assert.equal(pickFrame(chooseSet(kid, shared), 'curious'), '/avatar/kindergarten/listening.png', "kid's missing expression stays on the kid's face");
+  assert.equal(chooseSet({ confused: '/avatar/high/confused.png' }, shared), shared, 'a level without a listening frame uses the shared character');
+  assert.deepEqual(chooseSet({}, {}), {}, 'no art anywhere -> placeholder');
 });
