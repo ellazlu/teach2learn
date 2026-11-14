@@ -28,7 +28,9 @@ body {
 
 .container { max-width: 980px; margin: 0 auto; padding: 24px 20px 64px; }
 
-.brand { display: flex; align-items: baseline; gap: 12px; margin-bottom: 24px; cursor: pointer; }
+.brand { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 24px; }
+.brand-left { display: flex; align-items: baseline; gap: 12px; cursor: pointer; }
+.btn.nav { padding: 8px 14px; }
 .logo { font-weight: 800; font-size: 1.5rem; letter-spacing: -0.02em; }
 .tagline { color: var(--muted); }
 
@@ -218,3 +220,17 @@ summary { cursor: pointer; font-weight: 600; }
   .two-col, .score-card { grid-template-columns: 1fr; }
   .level-grid { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* History */
+.history-list { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 8px; }
+.history-item { display: flex; align-items: center; gap: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 4px 12px 4px 4px; }
+.history-item:hover { border-color: var(--accent); }
+.history-open { flex: 1; display: flex; align-items: center; gap: 14px; background: none; border: none; font: inherit; color: inherit; text-align: left; cursor: pointer; padding: 8px; }
+.history-text { display: flex; flex-direction: column; }
+.score-badge { min-width: 56px; text-align: center; font-weight: 800; border-radius: 8px; padding: 8px 6px; }
+.score-badge.hi { background: var(--good-soft); color: var(--good); }
+.score-badge.mid { background: var(--warn-soft); color: var(--warn); }
+.score-badge.lo { background: var(--bad-soft); color: var(--bad); }
+.empty { margin: 16px 0 0; }
+.details-body { padding-top: 10px; }
+.attempts li.current { font-weight: 600; }

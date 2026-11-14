@@ -1,7 +1,9 @@
 'use client';
 
 import { formatTime } from '../lib/client';
+import { getLevel } from '../lib/levels';
 import { Note } from './SessionScreen';
+import { TopicOverview } from './OverviewScreen';
 
 const STATUS = {
   met: { label: 'Met', icon: '✅' },
@@ -9,29 +11,38 @@ const STATUS = {
   missing: { label: 'Missing', icon: '❌' },
 };
 
-export default function ResultsScreen({ plan, level, session, grade, attempts, timeLimitSec, onRetry, onReview, onNewTopic }) {
+// Shows one graded session. Used right after a session and when reopening a
+// session from History. `attempts` = all sessions on the same topic, oldest first.
+// `footer` = the buttons for this context.
+export default function ResultsScreen({ entry, attempts, isHistory, footer }) {
+  const { plan, session, grade, timeLimitSec } = entry;
+  const level = getLevel(entry.levelId);
   const { score } = grade;
   const conceptName = (id) => plan.concepts.find((c) => c.id === id)?.name || id;
-  const previous = attempts.slice(0, -1);
-  const prev = previous[previous.length - 1];
+  const idx = attempts.findIndex((a) => a.id === entry.id);
+  const prev = idx > 0 ? attempts[idx - 1] : null;
+  const prevPercent = prev?.grade.score.percent;
 
   return (
     <div className="stack">
       <section className="card score-card">
         <div>
-          <p className="eyebrow">{plan.topic_title} · {level.emoji} {level.label}</p>
+          <p className="eyebrow">
+            {plan.topic_title} · {level.emoji} {level.label}
+            {isHistory && ` · ${new Date(entry.createdAt).toLocaleString()}`}
+          </p>
           <div className="score">{score.percent}%</div>
           <p className="muted">
             ✅ {score.met} met · 🟡 {score.partial} partial · ❌ {score.missing} missing ·
             ⏱ {formatTime(session.timeUsedSec)} of {formatTime(timeLimitSec)}
           </p>
           {prev && (
-            <p className={score.percent >= prev.percent ? 'good' : 'muted'}>
-              {score.percent > prev.percent
-                ? `▲ Up ${score.percent - prev.percent} points from your last attempt`
-                : score.percent === prev.percent
-                ? 'Same score as your last attempt'
-                : `▼ Down ${prev.percent - score.percent} points from your last attempt`}
+            <p className={score.percent >= prevPercent ? 'good' : 'muted'}>
+              {score.percent > prevPercent
+                ? `▲ Up ${score.percent - prevPercent} points from the previous attempt`
+                : score.percent === prevPercent
+                ? 'Same score as the previous attempt'
+                : `▼ Down ${prevPercent - score.percent} points from the previous attempt`}
             </p>
           )}
         </div>
@@ -113,6 +124,12 @@ export default function ResultsScreen({ plan, level, session, grade, attempts, t
 
       <section className="card">
         <details>
+          <summary>📘 Topic overview</summary>
+          <div className="details-body">
+            <TopicOverview plan={plan} />
+          </div>
+        </details>
+        <details>
           <summary>📓 Learner's notebook ({session.notes.length} notes)</summary>
           <ul className="notebook static">
             {session.notes.map((n, i) => <Note key={i} note={n} />)}
@@ -124,24 +141,21 @@ export default function ResultsScreen({ plan, level, session, grade, attempts, t
         </details>
       </section>
 
-      {previous.length > 0 && (
+      {attempts.length > 1 && (
         <section className="card">
-          <h3>Your attempts</h3>
+          <h3>All attempts on this topic</h3>
           <ul className="attempts">
-            {attempts.map((a) => (
-              <li key={a.n}>Attempt {a.n}: <strong>{a.percent}%</strong> in {formatTime(a.timeUsedSec)}</li>
+            {attempts.map((a, i) => (
+              <li key={a.id} className={a.id === entry.id ? 'current' : ''}>
+                Attempt {i + 1}: <strong>{a.grade.score.percent}%</strong> in {formatTime(a.session.timeUsedSec)}
+                {a.id === entry.id && <span className="muted"> (this one)</span>}
+              </li>
             ))}
           </ul>
         </section>
       )}
 
-      <div className="row space-between">
-        <div className="row">
-          <button className="btn ghost" onClick={onNewTopic}>New topic</button>
-          <button className="btn ghost" onClick={onReview}>Review rubric</button>
-        </div>
-        <button className="btn big" onClick={onRetry}>↻ Try again</button>
-      </div>
+      {footer}
     </div>
   );
 }

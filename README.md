@@ -46,7 +46,8 @@ lib/verify.js      ← quote checking + dropping unsourced rubric items
 lib/grading.js     ← turns the model's grading into the final, code-checked result
 lib/claude.js      ← API calls (forced tool use = guaranteed JSON); model names
 app/api/*          ← the three endpoints
-components/        ← the four screens: Setup, Overview, Session, Results
+components/        ← the screens: Setup, Overview, Session, Results, History
+lib/history.js     ← saving/loading past sessions (localStorage)
 app/globals.css    ← all styling
 ```
 
@@ -63,10 +64,9 @@ Models: Sonnet for prep and grading, Haiku for the live note-taker. Change them 
 - Upload types: PDF, TXT, MD, images. Export slides or Word docs to PDF first. Keep uploads under 3 MB total (Vercel's request limit).
 - Quote checking runs on text sources only. For PDFs, the source quotes come from the model unchecked (the grading-side transcript checks still apply).
 - Speech recognition is Chrome-first and English (`rec.lang` in `SessionScreen.js`).
-- Nothing is saved: refreshing the page clears everything.
+- **History** (graded sessions: overview, rubric, feedback, notes, transcript) is saved in the browser's localStorage, so it survives a refresh but stays on that one browser. Uploaded files aren't saved, so to teach an old topic again after a refresh, re-upload it.
 
 ## Stretch goals
 
 - Learner asks one question at the end about its biggest "lost me" moment
-- Save attempts to localStorage to show progress across sessions
 - Extract text from PDFs in the browser (pdf.js) so PDF quotes can be checked too
