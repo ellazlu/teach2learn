@@ -11,7 +11,21 @@ const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'playwright');
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..');
 
+// Tiny solid-color PNGs stand in for the team's avatar art.
+import { deflateSync } from 'node:zlib';
+function png(r, g, b, size = 64) {
+  const crcTable = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+  const crc = (buf) => { let c = 0xffffffff; for (const x of buf) c = crcTable[(c ^ x) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+  const chunk = (type, data) => { const len = Buffer.alloc(4); len.writeUInt32BE(data.length); const td = Buffer.concat([Buffer.from(type), data]); const c = Buffer.alloc(4); c.writeUInt32BE(crc(td)); return Buffer.concat([len, td, c]); };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(size, 0); ihdr.writeUInt32BE(size, 4); ihdr[8] = 8; ihdr[9] = 2;
+  const row = Buffer.concat([Buffer.from([0]), Buffer.from(Array.from({ length: size }, () => [r, g, b]).flat())]);
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(Buffer.concat(Array(size).fill(row)))), chunk('IEND', Buffer.alloc(0))]);
+}
+const AVATAR_FRAMES = { listening: [200, 200, 200], confused: [240, 160, 60], 'talking-1': [60, 120, 240], 'talking-2': [140, 180, 250] };
+
 const files = {
+  '/avatar/avatar.json': ['application/json', JSON.stringify({ format: 'png', frames: Object.keys(AVATAR_FRAMES) })],
+  ...Object.fromEntries(Object.entries(AVATAR_FRAMES).map(([n, c]) => [`/avatar/${n}.png`, ['image/png', png(...c)]])),
   '/': ['text/html', `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/app.css"></head><body><div id="root"></div><script src="/app.js"></script></body></html>`],
   '/app.js': ['text/javascript', () => readFileSync(path.join(root, 'tests/browser/out/app.js'))],
   '/app.css': ['text/css', () => readFileSync(path.join(root, 'app/globals.css'))],
@@ -45,6 +59,10 @@ try {
   await page.waitForSelector('.session-bar');
   assert.equal(await page.evaluate(() => window.__rec.active), true);
   step('Start session goes straight into a live session; mic on');
+  await page.waitForSelector('.avatar.has-art img[src="/avatar/listening.png"]');
+  step('avatar uses the hand-drawn frames from public/avatar (listening frame)');
+  const seen = new Set();
+  const watch = setInterval(() => page.$eval('.av-img', (i) => i.getAttribute('src')).then((x) => seen.add(x)).catch(() => {}), 40);
 
   // 1) Teacher explains; student objects with its misconception, quickly.
   await page.waitForTimeout(300);
@@ -57,6 +75,10 @@ try {
   step(`student replied to what was just said, ${Math.round(firstReplyMs)} ms after the teacher's speech ended (simulated APIs)`);
   assert.equal(await page.evaluate(() => window.__ttsCalls[0].voice), 'Google US English', 'natural browser voice chosen over the default');
   await page.waitForSelector('.avatar.b-responding');
+  await page.waitForTimeout(400);
+  clearInterval(watch);
+  assert.ok(seen.has('/avatar/talking-1.png') && seen.has('/avatar/talking-2.png'), `talking frames alternate while speaking (saw ${[...seen]})`);
+  step('talking frames alternate while the student speaks');
   assert.equal(await page.evaluate(() => window.__rec.active), false);
   assert.equal(await say('wait but dont plants eat dirt'), false);
   step('mic paused while the student talks (its voice is never transcribed)');
@@ -111,7 +133,18 @@ try {
   await page.waitForSelector('.results');
   step('session restored from history after reload');
 
-  // 7) Mobile layout.
+  // 7) No art yet -> placeholder face, and a missing expression falls back to listening.
+  const bare = await context.newPage();
+  await bare.route('**/avatar/avatar.json', (r) => r.fulfill({ contentType: 'application/json', body: '{"format":"png","frames":[]}' }));
+  await bare.goto(url);
+  await bare.fill('.topic-input', 'Photosynthesis');
+  await bare.click('button:has-text("Start session")');
+  await bare.waitForSelector('.avatar .av-svg');
+  assert.equal(await bare.$('.av-img'), null);
+  await bare.close();
+  step('with no art listed, the built-in placeholder face is used');
+
+  // 8) Mobile layout.
   const mobile = await page.context().newPage();
   await mobile.setViewportSize({ width: 390, height: 844 });
   await mobile.goto(url);

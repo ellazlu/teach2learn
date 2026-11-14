@@ -1,15 +1,16 @@
 'use client';
 
-// PLACEHOLDER AVATAR. Your team's hand-drawn character replaces this file (and
-// the "Avatar" block in app/globals.css). The rest of the app only uses:
+import { useEffect, useState } from 'react';
+import { loadFrames, pickFrame } from '../lib/avatar';
+
+// The student avatar. Uses your hand-drawn frames from public/avatar/ (listed
+// in public/avatar/avatar.json, see the README there); falls back to the
+// built-in placeholder face until a `listening` frame exists.
 //
+// Props (the rest of the app only uses these):
 //   behavior: 'listening' | 'curious' | 'confused' | 'understanding' | 'challenging' | 'responding'
-//             (the student's state from lib/student/behavior.ts)
-//   speaking: true while the student's voice is playing
+//   speaking: true while the student's voice is playing (alternates talking frames)
 //   thinking: true while the student is forming a reply
-//
-// Easy swap: one image per behavior (plus a talking loop for `speaking`), a
-// Lottie/Rive file with a "behavior" input, or an SVG using these class names.
 
 const LABELS = {
   listening: 'Listening',
@@ -23,6 +24,64 @@ const LABELS = {
 export function behaviorLabel(behavior) {
   return LABELS[behavior] || 'Listening';
 }
+
+const TALK_FPS = 7;
+
+export default function Avatar({ behavior = 'listening', speaking = false, thinking = false }) {
+  const [frames, setFrames] = useState(null);
+  const [talkFrame, setTalkFrame] = useState(0);
+  const [blink, setBlink] = useState(false);
+  const b = speaking ? 'responding' : behavior;
+
+  useEffect(() => {
+    let alive = true;
+    loadFrames().then((f) => alive && setFrames(f));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Alternate mouth frames while speaking.
+  useEffect(() => {
+    if (!speaking) return setTalkFrame(0);
+    const id = setInterval(() => setTalkFrame((f) => 1 - f), 1000 / TALK_FPS);
+    return () => clearInterval(id);
+  }, [speaking]);
+
+  // Blink every few seconds (only if a blink frame exists).
+  useEffect(() => {
+    if (speaking || !frames?.['listening-blink']) return;
+    let t;
+    const loop = () => {
+      t = setTimeout(() => {
+        setBlink(true);
+        t = setTimeout(() => {
+          setBlink(false);
+          loop();
+        }, 140);
+      }, 2500 + Math.random() * 3000);
+    };
+    loop();
+    return () => clearTimeout(t);
+  }, [speaking, frames]);
+
+  const src = frames ? pickFrame(frames, b, talkFrame, blink) : null;
+
+  return (
+    <div className={`avatar b-${b}${thinking && !speaking ? ' thinking' : ''}${src ? ' has-art' : ''}`} role="img" aria-label={`Student: ${behaviorLabel(b)}`}>
+      {src ? <img className="av-img" src={src} alt="" draggable={false} /> : frames && <Placeholder behavior={b} speaking={speaking} />}
+      {thinking && !speaking && (
+        <span className="av-dots" aria-hidden>
+          <span />
+          <span />
+          <span />
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ---- Built-in placeholder face (used until your art is added) ----------------------
 
 function Mouth({ behavior, speaking }) {
   if (speaking) return <ellipse className="av-mouth talking" cx="100" cy="132" rx="11" ry="7" />;
@@ -40,10 +99,9 @@ function Mouth({ behavior, speaking }) {
   }
 }
 
-export default function Avatar({ behavior = 'listening', speaking = false, thinking = false }) {
-  const b = speaking ? 'responding' : behavior;
+function Placeholder({ behavior, speaking }) {
   return (
-    <div className={`avatar b-${b}${thinking && !speaking ? ' thinking' : ''}`} role="img" aria-label={`Student: ${behaviorLabel(b)}`}>
+    <>
       <svg viewBox="0 0 200 200" className="av-svg">
         <circle className="av-head" cx="100" cy="100" r="76" />
         <path className="av-brow left" d="M62 70 Q73 64 84 68" />
@@ -52,9 +110,9 @@ export default function Avatar({ behavior = 'listening', speaking = false, think
           <circle cx="74" cy="92" r="6" />
           <circle cx="126" cy="92" r="6" />
         </g>
-        <Mouth behavior={b} speaking={speaking} />
+        <Mouth behavior={behavior} speaking={speaking} />
       </svg>
       <span className="av-placeholder">Placeholder avatar</span>
-    </div>
+    </>
   );
 }

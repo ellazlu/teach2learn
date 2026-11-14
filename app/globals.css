@@ -198,6 +198,14 @@ textarea.input { resize: vertical; }
 .av-mouth { fill: none; stroke: var(--ink); stroke-width: 3.5; stroke-linecap: round; }
 .av-mouth.talking { fill: var(--ink-2); stroke-width: 2; transform-box: fill-box; transform-origin: center; animation: talk 0.24s infinite alternate; }
 .av-brow { fill: none; stroke: var(--ink); stroke-width: 3; stroke-linecap: round; opacity: 0; transform-box: fill-box; transform-origin: center; transition: opacity 0.2s, transform 0.25s; }
+.av-img { width: 100%; height: 100%; object-fit: contain; display: block; user-select: none; }
+/* With real art, expressions come from the frames; keep only a gentle idle motion. */
+.has-art.b-listening .av-img, .has-art.b-responding .av-img { animation: breathe 4s ease-in-out infinite; }
+.av-dots { position: absolute; top: 6px; right: 0; display: flex; gap: 4px; padding: 6px 8px; background: var(--bg); border: 1px solid var(--line); border-radius: var(--r); }
+.av-dots span { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); animation: dot 1s infinite; }
+.av-dots span:nth-child(2) { animation-delay: 0.15s; }
+.av-dots span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes dot { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
 .av-placeholder { position: absolute; left: 50%; bottom: -6px; transform: translateX(-50%); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); white-space: nowrap; }
 
 .b-listening .av-svg { animation: breathe 4s ease-in-out infinite; }

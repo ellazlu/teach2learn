@@ -104,7 +104,9 @@ function streamText(text, signal) {
   });
 }
 
+const realFetch = window.fetch.bind(window);
 window.fetch = async (url, opts = {}) => {
+  if (String(url).startsWith('/avatar/')) return realFetch(url, opts); // real static files (avatar art)
   const method = opts.method || 'GET';
   const body = opts.body ? JSON.parse(opts.body) : {};
   if (url === '/api/tts' && method === 'GET') return json({ provider: 'browser' });
