@@ -60,10 +60,23 @@ try {
   await page.fill('.topic-input', 'Photosynthesis');
   await page.click('.segmented button:has-text("Middle schooler")');
   await page.click('.segmented button:has-text("2 min")');
+  const t0 = Date.now();
+  await page.click('button:has-text("Build concept checklist")');
+  await page.waitForSelector('.checklist-edit li');
+  const shownMs = Date.now() - t0;
+  assert.equal(await page.textContent('.checklist-setup .btn.primary'), 'Preparing the student…', 'details still loading in the background');
+  assert.ok(await page.isDisabled('.checklist-setup .btn.primary'));
+  const prep = await page.evaluate(() => window.__calls.prepare.map((p) => p.stage));
+  assert.deepEqual(prep.slice(0, 2), ['outline', 'details'], 'names first, details in the background');
+  await shot('0b-checklist-educator');
+  await page.waitForSelector('.checklist-setup .btn.primary:has-text("Start session")', { timeout: 8000 });
+  step(`Learn to Teach checklist: names shown after ${shownMs} ms (simulated fast model) while details load in the background`);
   await page.click('button:has-text("Start session")');
   await page.waitForSelector('.session-bar');
   assert.equal(await page.evaluate(() => window.__rec.active), true);
-  step('Start session goes straight into a live session; mic on');
+  assert.equal(await page.textContent('.side .panel .label'), 'Checklist');
+  assert.ok(await page.$('.side .cl-mark input'), 'own checkmarks in the Learn to Teach sidebar');
+  step('Start session goes into a live session with the checklist beside it; mic on');
   await page.waitForSelector('.avatar.has-art img[src="/avatar/middle/listening.png"]');
   step("avatar uses the middle-school character's own frames");
   const seen = new Set();
@@ -154,7 +167,11 @@ try {
   // 5b) Next Challenge launches the coach's scenario directly into a session.
   const challengeTitle = await page.textContent('.challenge-card .next h3');
   await page.click('.challenge-card button:has-text("Start next challenge")');
-  await page.waitForSelector('.challenge-goal');
+  await page.waitForSelector('.checklist-setup .challenge-goal');
+  assert.ok((await page.evaluate(() => window.__calls.prepare.filter((p) => p.stage === 'details').at(-1).misconception)) !== undefined);
+  await page.waitForSelector('.checklist-setup .btn.primary:has-text("Start session")', { timeout: 8000 });
+  await page.click('button:has-text("Start session")');
+  await page.waitForSelector('.session .challenge-goal');
   await page.waitForFunction(() => window.__rec?.active, null, { timeout: 8000 });
   step(`Next Challenge ("${challengeTitle}") started a session with its goal shown`);
   await say('so plants make their own food from sunlight water and air, the soil only gives water and minerals, the food is sugar made in the leaves, does that make sense');
@@ -215,7 +232,8 @@ try {
   await hs.goto(url);
   await hs.fill('.topic-input', 'Photosynthesis');
   await hs.click('.segmented button:has-text("High schooler")');
-  await hs.click('button:has-text("Start session")');
+  await hs.click('button:has-text("Build concept checklist")');
+  await hs.click('.checklist-setup .btn.primary:has-text("Start session")', { timeout: 8000 });
   await hs.waitForSelector('.avatar.has-art img[src="/avatar/listening.png"]');
   await hs.close();
   step('a level without its own art uses the shared default character');
@@ -225,7 +243,8 @@ try {
   await bare.route('**/avatar/**avatar.json', (r) => r.fulfill({ contentType: 'application/json', body: '{"format":"png","frames":[]}' }));
   await bare.goto(url);
   await bare.fill('.topic-input', 'Photosynthesis');
-  await bare.click('button:has-text("Start session")');
+  await bare.click('button:has-text("Build concept checklist")');
+  await bare.click('.checklist-setup .btn.primary:has-text("Start session")', { timeout: 8000 });
   await bare.waitForSelector('.avatar .av-svg');
   assert.equal(await bare.$('.av-img'), null);
   await bare.close();

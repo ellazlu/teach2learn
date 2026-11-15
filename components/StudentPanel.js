@@ -15,7 +15,9 @@ export function conceptState(c) {
 
 const MIS = { active: 'Believes', partially_addressed: 'Unsure', resolved: 'Corrected' };
 
-export default function StudentPanel({ model, loading, error, onRetry }) {
+// With `manual`/`onToggle` it doubles as the Learn to Teach checklist: your
+// own ticks sit next to each concept, separate from what the student learned.
+export default function StudentPanel({ model, loading, error, onRetry, manual = null, onToggle = null }) {
   const [revealed, setRevealed] = useState([]);
 
   if (!model) {
@@ -38,13 +40,20 @@ export default function StudentPanel({ model, loading, error, onRetry }) {
 
   return (
     <div className="panel">
-      <h3 className="label">Student understanding</h3>
+      <h3 className="label">{manual ? 'Checklist' : 'Student understanding'}</h3>
       <ul className="concept-list">
         {model.concepts.map((c) => {
           const s = conceptState(c);
           return (
-            <li key={c.id} title={c.description}>
-              <span className="concept-name">{c.name}</span>
+            <li key={c.id}>
+              {manual ? (
+                <label className="cl-mark" title="Your own checkmark (doesn't affect the status)">
+                  <input type="checkbox" checked={manual.includes(c.id)} onChange={() => onToggle(c.id)} />
+                  <span className="concept-name">{c.name}</span>
+                </label>
+              ) : (
+                <span className="concept-name">{c.name}</span>
+              )}
               <span className={`status ${s.cls}`}>{s.label}</span>
             </li>
           );

@@ -20,7 +20,7 @@ import { MODE_NAME } from '../lib/learner/types.ts';
 // L2T Daily
 import DailyScreen, { DailyBanner, loadDailyUser, saveDailyUser } from '../components/DailyScreen';
 import { sanitizeExtraction } from '../lib/student/knowledge.ts';
-import { applyChecklist, toChecklist } from '../lib/learner/checklist.ts';
+import { applyChecklist, mergeDetails, toChecklist } from '../lib/learner/checklist.ts';
 import { initLearner } from '../lib/learner/tracker.ts';
 import { topicKeyOf } from '../lib/study/types.ts';
 import {
@@ -70,6 +70,7 @@ export default function Home() {
   const studyProfileRef = useRef(null);
   const [dailyStarting, setDailyStarting] = useState(false);
   const [dailyError, setDailyError] = useState('');
+  const buildSeq = useRef(0);
   const historyRef = useRef([]);
   const profileRef = useRef(null);
   const setupRef = useRef(null);
@@ -133,14 +134,11 @@ export default function Home() {
 
   function startNewTopic(s) {
     setError('');
-    if (s.mode === 'student') return buildChecklist({ ...s, topicId: `topic-${Date.now()}`, challenge: null, practice: null });
-    setSetup({ ...s, topicId: `topic-${Date.now()}`, challenge: null });
-    setExtraction(null);
-    setCurrentId(null);
-    setScreen('session');
+    // Both modes review a concept checklist before the session.
+    return buildChecklist({ ...s, topicId: `topic-${Date.now()}`, challenge: null, practice: null });
   }
 
-  // Launch the coach's scenario straight into a session.
+  // Launch the coach's scenario (via the checklist, which includes its misconception).
   function startChallenge(ch) {
     const from = historyRef.current.find((r) => r.id === ch.fromSessionId);
     const prev = setupRef.current;
@@ -148,7 +146,11 @@ export default function Home() {
     const reuseNotes = sameTopic && prev && prev.topicId === from.topicId;
     setError('');
     setMode('educator');
-    setSetup({
+    buildChecklist(setupFor(ch, from, prev, sameTopic, reuseNotes));
+  }
+
+  function setupFor(ch, from, prev, sameTopic, reuseNotes) {
+    return {
       mode: 'educator',
       topic: ch.scenario.topic,
       levelId: ch.scenario.levelId,
@@ -157,10 +159,8 @@ export default function Home() {
       focus: reuseNotes ? prev.focus : '',
       topicId: sameTopic ? from.topicId : `topic-${Date.now()}`,
       challenge: ch,
-    });
-    setExtraction(null); // re-extract so the scenario's misconception is included
-    setCurrentId(null);
-    setScreen('session');
+      practice: null,
+    };
   }
 
   async function runCoachFor(record) {
@@ -219,6 +219,7 @@ export default function Home() {
         evidence: fb.evidence,
         usedFallback: fb.usedFallback,
         latencies: sess.latencies || [],
+        manualChecked: sess.manualChecked || [],
         challengeId: s.challenge?.id || null,
         coach: { status: 'pending' },
       };
@@ -277,21 +278,42 @@ export default function Home() {
 
   // ---- Teach to Learn ------------------------------------------------------------------
 
+  // ---- Concept checklist (both modes) ------------------------------------------------------
+  // Stage 1: names from the fast model, shown right away. Stage 2: the hidden
+  // details (what each explanation must say, misconceptions) from the smart
+  // model, fetched while the user reviews. Edits are applied at start.
+
   async function buildChecklist(s) {
+    const seq = ++buildSeq.current;
     setSetup(s);
     setExtraction(null);
     setCurrentId(null);
-    setChecklist({ items: null, extraction: null, loading: true, error: '' });
+    setChecklist({ items: null, extraction: null, loading: true, error: '', details: 'pending' });
     setScreen('checklist');
+    const base = { sources: s.sources, topic: s.topic, levelId: s.levelId, focus: s.focus, mode: s.mode || 'educator', misconception: s.challenge?.scenario?.misconception || '' };
     try {
-      const ext = await postJSON('/api/prepare', { sources: s.sources, topic: s.topic, levelId: s.levelId, focus: s.focus, mode: 'student' });
-      setChecklist({ items: toChecklist(ext), extraction: ext, loading: false, error: '' });
+      const ext = await postJSON('/api/prepare', { ...base, stage: 'outline' });
+      if (seq !== buildSeq.current) return;
+      setChecklist({ items: toChecklist(ext), extraction: ext, loading: false, error: '', details: 'pending' });
+      loadDetails(base, ext, seq);
     } catch (e) {
-      setChecklist({ items: null, extraction: null, loading: false, error: e.message });
+      if (seq === buildSeq.current) setChecklist({ items: null, extraction: null, loading: false, error: e.message, details: 'failed' });
     }
   }
 
-  function startStudySession() {
+  async function loadDetails(base, ext, seq, attempt = 1) {
+    try {
+      const d = await postJSON('/api/prepare', { ...base, stage: 'details', outline: { topicTitle: ext.topicTitle, concepts: ext.concepts.map(({ id, name }) => ({ id, name })) } });
+      if (seq !== buildSeq.current) return;
+      setChecklist((c) => (c?.extraction ? { ...c, extraction: mergeDetails(c.extraction, d), details: 'ready' } : c));
+    } catch (e) {
+      if (seq !== buildSeq.current) return;
+      if (attempt < 2) return loadDetails(base, ext, seq, attempt + 1);
+      setChecklist((c) => (c ? { ...c, details: 'failed', detailsError: e.message } : c));
+    }
+  }
+
+  function startChecklistSession() {
     const ext = applyChecklist(checklist.extraction, checklist.items);
     setExtraction(ext);
     setCurrentId(null);
@@ -318,7 +340,8 @@ export default function Home() {
     };
     if (!ext) return buildChecklist(s);
     setSetup(s);
-    setChecklist({ items: toChecklist(ext), extraction: ext, loading: false, error: '' });
+    buildSeq.current += 1;
+    setChecklist({ items: toChecklist(ext), extraction: ext, loading: false, error: '', details: 'ready' });
     setScreen('checklist');
   }
 
@@ -466,8 +489,11 @@ export default function Home() {
             error={checklist.error}
             practice={setup?.practice}
             onChange={(items) => setChecklist((c) => ({ ...c, items }))}
+            details={checklist.details}
+            mode={setup?.mode || 'educator'}
+            challenge={setup?.challenge}
             onRetry={() => buildChecklist(setup)}
-            onStart={startStudySession}
+            onStart={startChecklistSession}
             onBack={() => setScreen('setup')}
           />
         )}
@@ -536,7 +562,7 @@ export default function Home() {
               <div className="footer-actions">
                 <button className="btn-text" onClick={() => openPage('progress')}>See progress</button>
                 <button className="btn" onClick={() => setScreen('setup')}>New topic</button>
-                <button className="btn" onClick={() => { setSetup((x) => ({ ...x, practice: null })); setChecklist({ items: toChecklist(currentStudy.extraction), extraction: currentStudy.extraction, loading: false, error: '' }); setScreen('checklist'); }}>Explain it again</button>
+                <button className="btn" onClick={() => { setSetup((x) => ({ ...x, practice: null })); setChecklist({ items: toChecklist(currentStudy.extraction), extraction: currentStudy.extraction, loading: false, error: '', details: 'ready' }); setScreen('checklist'); }}>Explain it again</button>
               </div>
             }
           />

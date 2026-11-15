@@ -315,7 +315,8 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
       utterances: engine.utterances,
       latencies: engine.latencies,
       timeUsedSec: Math.round(timeUsedSec),
-      ...(study ? { learner: engine.learner, boards: engine.boards, manualChecked: manual } : {}),
+      manualChecked: manual,
+      ...(study ? { learner: engine.learner, boards: engine.boards } : {}),
     });
   }
 
@@ -418,7 +419,13 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
           {study ? (
             <ConceptChecklist learner={snap?.learner} manual={manual} onToggle={(id) => setManual((m) => (m.includes(id) ? m.filter((x) => x !== id) : [...m, id]))} />
           ) : (
-            <StudentPanel model={snap?.model} loading={extractState === 'loading'} error={extractState === 'failed' ? extractError : ''} onRetry={loadExtraction} />
+            <StudentPanel
+              model={snap?.model}
+              loading={extractState === 'loading'}
+              error={extractState === 'failed' ? extractError : ''}
+              onRetry={loadExtraction}
+              {...(setup.daily ? {} : { manual, onToggle: (id) => setManual((m) => (m.includes(id) ? m.filter((x) => x !== id) : [...m, id])) })}
+            />
           )}
           <div className="transcript">
             <h3 className="label">Transcript</h3>

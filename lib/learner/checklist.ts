@@ -78,12 +78,18 @@ export function applyChecklist(ext: Extraction, items: ChecklistItem[]): Extract
     const orig = byId.get(item.id);
     if (orig) {
       const renamed = name.toLowerCase() !== orig.name.toLowerCase();
-      concepts.push({ ...orig, name, keyTerms: renamed ? [...new Set([name, ...orig.keyTerms])] : orig.keyTerms });
+      concepts.push({
+        ...orig,
+        name,
+        // Details never arrived (e.g. the request failed): judge against general knowledge.
+        description: orig.description || GENERIC_DESC(name, ext.topicTitle, ext.fromMaterial),
+        keyTerms: renamed ? [...new Set([name, ...orig.keyTerms])] : orig.keyTerms,
+      });
     } else {
       concepts.push({
         id: item.id,
         name,
-        description: `(Added by the learner.) Judge against standard, accurate knowledge of "${name}" within ${ext.topicTitle || 'this topic'}${ext.fromMaterial ? ' and the uploaded material' : ''}.`,
+        description: GENERIC_DESC(name, ext.topicTitle, ext.fromMaterial),
         difficulty: 2,
         prerequisites: [],
         keyTerms: [name],
@@ -97,3 +103,60 @@ export function applyChecklist(ext: Extraction, items: ChecklistItem[]): Extract
   const kept = new Set(concepts.map((c) => c.id));
   return { ...ext, concepts, misconceptions: ext.misconceptions.filter((m) => kept.has(m.conceptId)) };
 }
+
+// ---- Two-stage building (outline first, details in the background) -------------------
+
+export const GENERIC_DESC = (name: string, topic: string, fromMaterial: boolean) =>
+  `(Added by the learner.) Judge against standard, accurate knowledge of "${name}" within ${topic || 'this topic'}${fromMaterial ? ' and the uploaded material' : ''}.`;
+
+// Stage 1: names + order only. Descriptions stay empty until the details arrive.
+export function outlineToExtraction(raw: any, fromMaterial: boolean): Extraction {
+  return cleanStudyExtraction(
+    {
+      topicTitle: raw?.topic_title,
+      overview: '',
+      concepts: (raw?.concepts || []).map((c: any) => ({ id: c.id, name: c.name, description: '', difficulty: 2, prerequisites: c.prerequisites || [], keyTerms: [String(c.name || '')] })),
+      misconceptions: [],
+    } as any,
+    fromMaterial,
+  );
+}
+
+export interface ConceptDetails {
+  overview: string;
+  concepts: { id: string; description: string; difficulty: number; keyTerms: string[] }[];
+  misconceptions: { id: string; conceptId: string; belief: string; correction: string }[];
+}
+
+export function cleanDetails(raw: any, ids: string[]): ConceptDetails {
+  const known = new Set(ids);
+  const str = (x: unknown, max: number) => String(x ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+  const seenM = new Set<string>();
+  return {
+    overview: str(raw?.overview, 300),
+    concepts: (raw?.concepts || [])
+      .map((c: any) => ({ id: str(c?.id, 20).toLowerCase(), description: str(c?.description, 400), difficulty: Math.max(1, Math.min(5, Math.round(Number(c?.difficulty) || 2))), keyTerms: (c?.key_terms || c?.keyTerms || []).map((t: any) => str(t, 40)).filter(Boolean).slice(0, 4) }))
+      .filter((c: any) => known.has(c.id) && c.description),
+    misconceptions: (raw?.misconceptions || [])
+      .map((m: any, i: number) => ({ id: str(m?.id, 20).toLowerCase() || `m${i + 1}`, conceptId: str(m?.concept_id ?? m?.conceptId, 20).toLowerCase(), belief: str(m?.belief, 200), correction: str(m?.correction, 300) }))
+      .filter((m: any) => known.has(m.conceptId) && m.belief && !seenM.has(m.id) && seenM.add(m.id))
+      .slice(0, 2),
+  };
+}
+
+// Stage 2 merged into the base extraction (by id). Edits are applied later by
+// applyChecklist, so details arriving after the user renamed things still fit.
+export function mergeDetails(ext: Extraction, d: ConceptDetails): Extraction {
+  const by = new Map(d.concepts.map((c) => [c.id, c]));
+  return {
+    ...ext,
+    overview: d.overview || ext.overview,
+    concepts: ext.concepts.map((c) => {
+      const x = by.get(c.id);
+      return x ? { ...c, description: x.description, difficulty: x.difficulty, keyTerms: [...new Set([c.name, ...x.keyTerms])] } : c;
+    }),
+    misconceptions: d.misconceptions,
+  };
+}
+
+export const detailsReady = (ext: Extraction | null) => !!ext && ext.concepts.every((c) => !!c.description);

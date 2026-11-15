@@ -47,13 +47,14 @@ try {
   assert.match(await page.textContent('.mode-pick'), /Learn to Teach — Educator[\s\S]*Teach to Learn — Student/);
   await page.click('.mode-option:has-text("Teach to Learn")');
   assert.equal(await page.textContent('.setup-actions .btn.primary'), 'Build concept checklist');
-  assert.equal(await page.textContent('.segmented.compact button.on'), '5 min', 'longer default for 5-10 concepts');
+  assert.equal(await page.textContent('.segmented.compact button.on'), '5 min', 'default fits a 5-10 concept checklist');
   await page.fill('.topic-input', 'Photosynthesis');
   await page.click('.segmented button:has-text("High schooler")');
   await shot('s0-setup');
   await page.click('button:has-text("Build concept checklist")');
   await page.waitForSelector('.checklist-edit li');
   assert.equal((await calls('prepare'))[0].mode, 'student');
+  await page.waitForSelector('.checklist-setup .btn.primary:has-text("Start session")', { timeout: 8000 });
   step('mode selection: Teach to Learn builds a concept checklist first');
 
   // 2) Checklist editing

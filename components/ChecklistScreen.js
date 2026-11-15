@@ -5,7 +5,8 @@ import { addItem, checklistProblems, moveItem, removeItem, renameItem, TARGET, M
 
 // Teach to Learn: review the concept checklist before starting. Names only;
 // what each concept should contain stays hidden (it's what you're testing).
-export default function ChecklistScreen({ topic, items, loading, error, onChange, onRetry, onStart, onBack, practice }) {
+export default function ChecklistScreen({ topic, items, loading, error, onChange, onRetry, onStart, onBack, practice, challenge, details = 'ready', mode = 'student' }) {
+  const study = mode === 'student';
   const [draft, setDraft] = useState('');
   const problems = items ? checklistProblems(items) : [];
 
@@ -34,9 +35,12 @@ export default function ChecklistScreen({ topic, items, loading, error, onChange
       {items && !loading && (
         <>
           <p className="muted">
-            The key ideas to explain, in a sensible order. Rename, add, remove or reorder them. Only the names are shown, never the answers.
+            The key ideas to {study ? 'explain' : 'teach'}, in a sensible order. Rename, add, remove or reorder them. Only the names are shown, never the answers.
             {items.length < TARGET.min && ' A few more concepts usually makes a better session.'}
           </p>
+          {challenge && (
+            <p className="challenge-goal"><span className="label">Challenge</span> {challenge.goal}</p>
+          )}
           {practice && (
             <p className="challenge-goal"><span className="label">Practice</span> The student will start by asking about {practice.conceptName.toLowerCase()}.</p>
           )}
@@ -66,8 +70,16 @@ export default function ChecklistScreen({ topic, items, loading, error, onChange
           </form>
           {problems.length > 0 && <p className="error small">{problems[0]}</p>}
           <div className="setup-actions">
-            <button className="btn primary large" onClick={onStart} disabled={problems.length > 0}>Start session</button>
-            <span className="muted small">The checklist stays beside the conversation. You can tick items off yourself; the status next to each one comes from what you actually explain.</span>
+            <button className="btn primary large" onClick={onStart} disabled={problems.length > 0 || details === 'pending'}>
+              {details === 'pending' ? 'Preparing the student…' : details === 'failed' ? 'Start anyway' : 'Start session'}
+            </button>
+            <span className="muted small">
+              {details === 'failed'
+                ? "Couldn't load what each concept should cover, so explanations will be judged against general knowledge of the topic."
+                : study
+                  ? 'The checklist stays beside the conversation. You can tick items off yourself; the status next to each one comes from what you actually explain.'
+                  : 'The checklist stays beside the conversation. You can tick items off yourself; the status shows what the student has actually learned.'}
+            </span>
           </div>
         </>
       )}

@@ -28,6 +28,27 @@ assert.equal((await r.json()).concepts.length, 3, 'Learn to Teach still extracts
 assert.match(last().system, /1-3 KEY concepts/);
 console.log('✓ /api/prepare mode=student: 5-10 concept checklist (Learn to Teach unchanged)');
 
+// ---- two-stage checklist (both modes): outline on the fast model, details on the smart one
+globalThis.__sdkReply = () => ({ topic_title: 'Photosynthesis', concepts: concepts.slice(0, 6).map(({ id, name, prerequisites }) => ({ id, name, prerequisites })) });
+r = await prepare(req({ topic: 'Photosynthesis', levelId: 'high', sources: [], mode: 'educator', stage: 'outline' }));
+const outline = await r.json();
+assert.equal(r.status, 200);
+assert.equal(outline.concepts.length, 6);
+assert.ok(outline.concepts.every((c) => c.description === ''), 'names only');
+assert.equal(last().model, 'claude-haiku-5-5', 'fast model for the names');
+assert.equal(last().max_tokens, 700);
+assert.match(last().system, /5-10 concepts[\s\S]*SHORT label/);
+allStrict(last().output_config.format.schema);
+globalThis.__sdkReply = () => ({ overview: 'o', concepts: outline.concepts.map((c) => ({ id: c.id.toUpperCase(), description: `what ${c.id} must say`, difficulty: 3, key_terms: ['t'] })), misconceptions: [{ id: 'm1', concept_id: 'c2', belief: 'b', correction: 'c' }] });
+r = await prepare(req({ topic: 'Photosynthesis', levelId: 'high', sources: [], mode: 'educator', stage: 'details', misconception: 'Plants eat soil', outline: { topicTitle: outline.topicTitle, concepts: outline.concepts.map(({ id, name }) => ({ id, name })) } }));
+const details = await r.json();
+assert.equal(details.concepts.length, 6);
+assert.equal(details.concepts[0].id, 'c1');
+assert.equal(last().model, 'claude-sonnet-5-5', 'smart model for the hidden details');
+assert.match(last().messages[0].content.at(-1).text, /c1: Concept 1[\s\S]*first misconception must be this belief[^\n]*Plants eat soil|first misconception must be this belief[^\n]*Plants eat soil[\s\S]*c1: Concept 1/);
+assert.equal((await prepare(req({ topic: 'x', levelId: 'high', stage: 'details', outline: { concepts: [] } }))).status, 400);
+console.log('✓ /api/prepare checklist stages: names on the fast model, details (incl. challenge misconception) on the smart model');
+
 // ---- reply (mode student): curious student, never gives answers -------------------------
 globalThis.__streamChunks = ['Why ', 'light?'];
 r = await reply(req({ mode: 'student', levelId: 'high', intent: 'error_check', details: { conceptName: 'Oxygen', conceptDescription: 'O2 comes from splitting water.', focusQuote: 'oxygen comes from CO2' }, outline: ['Basics', 'Oxygen'], board: { transcription: 'CO2 -> O2', description: 'arrow' }, knowledge: '', conversation: [], teacherJustSaid: 'the oxygen comes from CO2' }));

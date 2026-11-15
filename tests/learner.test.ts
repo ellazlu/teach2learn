@@ -250,3 +250,36 @@ test('recurring gaps from earlier sessions raise review priority', () => {
   assert.equal(b.conceptId, 'c6');
   assert.match(b.why, /earlier session/);
 });
+
+// ---- Two-stage checklist ---------------------------------------------------------------
+import { outlineToExtraction, cleanDetails, mergeDetails, detailsReady } from '../lib/learner/checklist.ts';
+
+test('two-stage checklist: names first, details merged by id even after edits', () => {
+  const outline = outlineToExtraction({ topic_title: 'Photosynthesis', concepts: [
+    { id: 'c1', name: 'What photosynthesis is', prerequisites: [] },
+    { id: 'c2', name: 'Chlorophyll', prerequisites: ['c1'] },
+    { id: 'c3', name: 'Where the oxygen comes from', prerequisites: ['c1', 'c9'] },
+  ] }, false);
+  assert.equal(detailsReady(outline), false);
+  assert.deepEqual(outline.concepts[2].prerequisites, ['c1']);
+  // The user edits while details load.
+  let items = toChecklist(outline);
+  items = renameItem(items, 'c2', 'Chlorophyll and light');
+  items = addItem(items, 'Leaf structure');
+  const details = cleanDetails({ overview: 'o', concepts: [
+    { id: 'C1', description: 'Plants make sugar from light, water and CO2.', difficulty: 9, key_terms: ['photosynthesis'] },
+    { id: 'c2', description: 'Absorbs red and blue light.', difficulty: 2, key_terms: ['chlorophyll'] },
+    { id: 'zz', description: 'unknown concept', difficulty: 1, key_terms: [] },
+  ], misconceptions: [{ id: 'm1', concept_id: 'c3', belief: 'Oxygen comes from CO2.', correction: 'From water.' }, { id: 'm2', concept_id: 'nope', belief: 'x', correction: 'y' }] }, ['c1', 'c2', 'c3']);
+  assert.equal(details.concepts.length, 2, 'unknown ids dropped');
+  assert.equal(details.concepts[0].difficulty, 5, 'clamped');
+  assert.equal(details.misconceptions.length, 1);
+  const merged = mergeDetails(outline, details);
+  const final = applyChecklist(merged, items);
+  assert.equal(final.concepts.find((c) => c.id === 'c2')!.description, 'Absorbs red and blue light.');
+  assert.equal(final.concepts.find((c) => c.id === 'c2')!.name, 'Chlorophyll and light');
+  assert.match(final.concepts.find((c) => c.id === 'c3')!.description, /Added by the learner|general|standard/, 'missing detail falls back to general knowledge');
+  assert.match(final.concepts.find((c) => c.id === 'u1')!.description, /Added by the learner/);
+  assert.equal(final.misconceptions[0].conceptId, 'c3');
+  assert.ok(final.concepts.every((c) => c.description), 'never starts a session with an empty description');
+});

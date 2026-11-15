@@ -48,7 +48,7 @@ export default function SetupScreen({ initial, error, onSubmit, mode = 'educator
   const study = mode === 'student';
   const initialFiles = (initial?.sources || []).filter((s) => s.name !== 'Pasted text');
   const initialPaste = initial?.sources?.find((s) => s.name === 'Pasted text')?.data || '';
-  const initialMin = initial ? initial.timeLimitSec / 60 : study ? 5 : 2;
+  const initialMin = initial ? initial.timeLimitSec / 60 : 5; // a 5-10 concept checklist needs a few minutes
 
   const [files, setFiles] = useState(initialFiles);
   const [pasted, setPasted] = useState(initialPaste);
@@ -85,10 +85,7 @@ export default function SetupScreen({ initial, error, onSubmit, mode = 'educator
   }
 
   function pickMode(m) {
-    if (m === mode) return;
-    onModeChange(m);
-    // Teach to Learn covers 5-10 concepts, so it defaults to a longer session.
-    if (!initial && !customMin) setMinutes(m === 'student' ? 5 : 2);
+    if (m !== mode) onModeChange(m);
   }
 
   const showNotes = notesOpen || files.length > 0 || pasted.trim();
@@ -112,7 +109,7 @@ export default function SetupScreen({ initial, error, onSubmit, mode = 'educator
       ) : (
         <header className="setup-head">
           <h1>Become a better educator.</h1>
-          <p className="muted">Explain a topic out loud to a simulated student. It asks questions, holds a few misconceptions, and has to show it understood. About two minutes is enough.</p>
+          <p className="muted">Pick a topic and review the checklist of key ideas, then teach them out loud to a simulated student. It asks questions, holds a few misconceptions, and has to show it understood.</p>
         </header>
       )}
 
@@ -172,7 +169,7 @@ export default function SetupScreen({ initial, error, onSubmit, mode = 'educator
       {(error || localError) && <p className="error">{error || localError}</p>}
 
       <div className="setup-actions">
-        <button className="btn primary large" type="submit" disabled={!canSubmit}>{study ? 'Build concept checklist' : 'Start session'}</button>
+        <button className="btn primary large" type="submit" disabled={!canSubmit}>Build concept checklist</button>
         <span className="muted small">Uses your microphone (Chrome works best). You can also type.</span>
       </div>
     </form>

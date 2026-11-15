@@ -2,7 +2,7 @@
 
 Two complementary modes, one voice conversation with a simulated student:
 
-- **Learn to Teach — Educator.** Become a better educator. Teach a realistic student for about two minutes; it asks real questions, holds a misconception or two, and has to show it understood. You get an overall score and three category scores out of 100, three lines of feedback, and a practice challenge from a coach that tracks you across sessions.
+- **Learn to Teach — Educator.** Become a better educator. Review a checklist of the key ideas, then teach a realistic student; it asks real questions, holds a misconception or two, and has to show it understood. You get an overall score and three category scores out of 100, three lines of feedback, and a practice challenge from a coach that tracks you across sessions.
 - **Teach to Learn — Student.** Master concepts by explaining them. Review a short checklist of the key ideas, then explain them to a curious student whose questions expose gaps in your own understanding. Optional whiteboard. Content-only feedback: what you got right, gaps, misconceptions, what to review next.
 - **L2T Daily.** Everyone teaches the same subject to the same student each day, scored out of 100 on the server, with a shared leaderboard.
 
@@ -76,8 +76,13 @@ A challenge (`lib/coach/challenges.ts`) has a skill, a goal shown during the ses
 
 `lib/progress.ts` keeps, per browser: each session's date, topic, level, ratings, speech metrics, feedback, end-of-session student state and the coach's focus; the challenges with every attempt; and the last coach log. Sessions saved before this existed are added from their saved data. Unmeasured values stay empty (gaps in the chart), never estimated. **Progress** shows the three ratings over time (with a table view), the current challenge and how attempts compare, recurring areas (in ≥2 of the last 5 rated sessions: improving / still showing up), and recent sessions.
 
+## Concept checklist (both modes)
+Both modes start with a 5–10 concept checklist, prerequisites first, from the topic or uploaded notes (notes win). You can rename, add, remove and reorder before starting; it then stays beside the conversation with your own ticks kept separate from the tracked status (Learn to Teach: what the student has learned; Teach to Learn: what you've shown you understand). Only names are shown, never the answers.
+
+It's built in two stages so it appears quickly: `/api/prepare` with `stage: 'outline'` asks the fast model for just the names (small output), and the checklist shows as soon as that returns. Then `stage: 'details'` asks the smart model, in the background while you review, for what each explanation must establish, key terms and the student's misconceptions (including a coach challenge's misconception). Details merge by concept id, so your edits still apply; if they fail, explanations are judged against general knowledge of the topic. L2T Daily skips the checklist (its concepts are fixed).
+
 ## Teach to Learn
-1. **Checklist.** `/api/prepare` (mode `student`) extracts 5–10 short concept names, prerequisites first, from the topic or uploaded notes (notes win). You can rename, add, remove and reorder them. Only names are shown; each concept's hidden description is what your explanations are judged against.
+1. **Checklist.** See above.
 2. **Session.** Same voice, avatar, turn-taking and background evaluation as Learn to Teach (`SessionEngine` with `mode: 'student'`). Code picks each question (`lib/learner/probes.ts`): clear up an unreadable drawing → question an error you made (without correcting you) → follow up on a half-answered question → the student's own misconception → your drawing → probe the concept you're on one level deeper (what → why/how → connections/assumptions → a new case) → a skipped prerequisite → curiosity about the next item. Depth rises when you answer well and drops after an error. The reply prompt keeps it a curious student, never an examiner, and never gives answers.
 3. **Live checklist** (`lib/learner/tracker.ts`): Not covered → Discussed → Demonstrated. Demonstrated needs an accurate explanation **and** a follow-up question answered fully and correctly, with no error left uncorrected. Your own checkmarks are separate.
 4. **Whiteboard** (optional): pen, eraser, colours, undo/redo, clear; mouse, touch or stylus. A snapshot is read by a vision model (`/api/whiteboard`) only when you press **Show the student**, after you stop drawing for 3.5s (at most every 12s, only if it changed), or at the end. What it reads is evaluated exactly like speech, so it counts on the checklist; the student can ask about it; anything it can't read becomes a question instead of a guess.

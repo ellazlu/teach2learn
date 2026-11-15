@@ -33,7 +33,7 @@ const STUDY_EXT = cleanStudyExtraction({
 
 window.__log = [];
 const log = (x) => window.__log.push(x);
-window.__lat = { evaluate: 1200, replyFirstToken: 400, replyChunk: 50, verify: 600 };
+window.__lat = { evaluate: 1200, replyFirstToken: 400, replyChunk: 50, verify: 600, outline: 300, details: 1500 };
 window.__calls = { evaluate: 0, reply: [], verify: 0, feedback: 0, coach: [], prepare: [], personas: [], replyBodies: [], whiteboard: [], studyFeedback: [], studyPlan: [], evalSegments: [] };
 window.__studyPlanFail = false;
 window.__coachFail = false;
@@ -141,8 +141,17 @@ window.fetch = async (url, opts = {}) => {
   if (url === '/api/tts' && method === 'GET') return json({ provider: 'browser' });
   if (url === '/api/prepare') {
     window.__calls.prepare.push(body);
+    const ext = body.mode === 'student' ? STUDY_EXT : EXTRACTION;
+    if (body.stage === 'outline') {
+      await sleep(window.__lat.outline);
+      return json({ ...ext, overview: '', misconceptions: [], concepts: ext.concepts.map((c) => ({ ...c, description: '', keyTerms: [c.name] })) });
+    }
+    if (body.stage === 'details') {
+      await sleep(window.__lat.details);
+      return json({ overview: ext.overview, concepts: ext.concepts.map((c) => ({ id: c.id, description: c.description, difficulty: c.difficulty, keyTerms: c.keyTerms })), misconceptions: ext.misconceptions });
+    }
     await sleep(80);
-    return json(body.mode === 'student' ? STUDY_EXT : EXTRACTION);
+    return json(ext);
   }
   if (body.daily) window.__daily.tokensSeen.add(`${url}:${body.daily}`);
   if (String(url).startsWith('/api/daily') && method === 'GET') {

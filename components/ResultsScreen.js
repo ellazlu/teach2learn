@@ -76,7 +76,10 @@ export default function ResultsScreen({ entry, attemptNumber, isHistory, footer,
           {concepts.map((c) => (
             <li key={c.conceptId}>
               <div className="cs-row">
-                <span className="concept-name">{c.name}</span>
+                <span className="concept-name">
+                  {c.name}
+                  {entry.manualChecked?.includes(c.conceptId) && <span className="tag" title="You ticked this yourself">ticked</span>}
+                </span>
                 <span className={`status ${STATUS_CLS[c.status]}`}>{c.status}</span>
               </div>
               {c.note && <p className="cs-note">{c.note}</p>}
