@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { validateChallenge, evaluateCriteria, makeAttempt, templateDraft, nextDifficulty, TEMPLATES, describeCriterion, type Challenge } from '../lib/coach/challenges.ts';
+import { plainReason, validateChallenge, evaluateCriteria, makeAttempt, templateDraft, nextDifficulty, TEMPLATES, describeCriterion, type Challenge } from '../lib/coach/challenges.ts';
 import { scoreEngagement, scoreCommunication, scoreTeaching, SKILL_IDS, type SessionFacts, type Scores } from '../lib/coach/rubric.ts';
 import {
   emptyProfile, loadProfile, saveProfile, addSession, applyCoachResult, seriesForChart, recurringWeaknesses,
@@ -176,4 +176,10 @@ test('save trims oldest sessions when storage is full', () => {
   const back = loadProfile(store);
   assert.ok(back.sessions.length < 20 && back.sessions.length > 0);
   assert.equal(back.sessions[back.sessions.length - 1].id, 's19', 'newest kept');
+});
+
+test('evidence ids are removed from text the tutor reads', () => {
+  assert.equal(plainReason("open questions about orbits (E3, E5) and the Solar System's members (E2)."), "open questions about orbits and the Solar System's members.");
+  assert.equal(plainReason('Unclear (E1 and E4).'), 'Unclear.');
+  assert.equal(plainReason('Nothing to strip (see Earth).'), 'Nothing to strip (see Earth).');
 });

@@ -5,6 +5,7 @@ import { getLevel } from '../lib/levels.ts';
 import { formatTime } from '../lib/client';
 import { CATEGORIES, CATEGORY_LABEL, SKILLS } from '../lib/coach/rubric.ts';
 import { describeCriterion } from '../lib/coach/challenges.ts';
+import { StudentProfile } from './ResultsScreen';
 import { currentChallenge, practiceEffect, recurringWeaknesses, seriesForChart } from '../lib/progress.ts';
 
 // Categorical palette (validated with the dataviz validator against #fff).
@@ -128,7 +129,7 @@ function CurrentChallenge({ ch, profile, onStart }) {
     <div className="current">
       <h3>{ch.title}</h3>
       <p>{ch.goal}</p>
-      <p className="small muted">{ch.scenario.studentProfile}</p>
+      <StudentProfile text={ch.scenario.studentProfile} />
       <ul className="criteria">
         {ch.criteria.map((c, i) => <li key={i}><span className="crit na">○</span>{describeCriterion(c)}</li>)}
       </ul>

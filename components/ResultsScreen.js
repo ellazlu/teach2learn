@@ -5,7 +5,7 @@ import { getLevel } from '../lib/levels.ts';
 import { fmt } from '../lib/student/speech.ts';
 import { Turn } from './SessionScreen';
 import { CATEGORIES, CATEGORY_LABEL, RUBRIC_TEXT } from '../lib/coach/rubric.ts';
-import { describeCriterion } from '../lib/coach/challenges.ts';
+import { describeCriterion, plainReason } from '../lib/coach/challenges.ts';
 import { rateRecord } from '../lib/coach/record.ts';
 
 const STATUS_CLS = {
@@ -174,6 +174,17 @@ const VERDICT = {
   not_enough_evidence: ['Not enough evidence', 'neutral'],
 };
 
+// Who the simulated student will be in the challenge (it plays this role).
+export function StudentProfile({ text }) {
+  if (!text) return null;
+  return (
+    <div className="persona">
+      <span className="persona-label">Your student</span>
+      <p>{text}</p>
+    </div>
+  );
+}
+
 function ChallengeCard({ coach, next, attempted, attempt, onStart, onRetry }) {
   const status = coach?.status;
   const outcome = coach?.outcome;
@@ -208,17 +219,17 @@ function ChallengeCard({ coach, next, attempted, attempt, onStart, onRetry }) {
         </div>
       )}
       {status === 'done' && !next && (
-        <p className="muted">{coach.reason ? `${coach.reason} ` : ''}Not enough evidence in this session to set a new challenge. Your current challenge stays the same.</p>
+        <p className="muted">{coach.reason ? `${plainReason(coach.reason)} ` : ''}Not enough evidence in this session to set a new challenge. Your current challenge stays the same.</p>
       )}
       {status === 'done' && next && (
         <div className="next">
           <h3>{next.title}</h3>
           <p>{next.goal}</p>
-          <p className="small muted">{next.scenario.studentProfile}</p>
+          <StudentProfile text={next.scenario.studentProfile} />
           <ul className="criteria">
             {next.criteria.map((c, i) => <li key={i}><span className="crit na">○</span>{describeCriterion(c)}</li>)}
           </ul>
-          {coach.reason && <p className="small"><span className="muted">Why: </span>{coach.reason}</p>}
+          {coach.reason && <p className="small"><span className="muted">Why: </span>{plainReason(coach.reason)}</p>}
           {outcome?.adjustment && <p className="small muted">{outcome.adjustment}</p>}
           <button className="btn primary large" onClick={() => onStart(next)}>
             {attempted && next.id === attempted.id ? 'Retry challenge' : 'Start next challenge'}

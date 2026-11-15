@@ -16,7 +16,7 @@ import {
   type Category, type Scores, type SessionFacts, type Skill,
 } from './rubric.ts';
 import {
-  METRIC_IDS, describeCriterion, evaluateCriteria, makeAttempt, nextDifficulty, templateDraft, validateChallenge,
+  METRIC_IDS, describeCriterion, plainReason, evaluateCriteria, makeAttempt, nextDifficulty, templateDraft, validateChallenge,
   type Challenge, type ChallengeDraft,
 } from './challenges.ts';
 import type { ChallengeOutcome, CoachLogEntry, CoachResult, CategoryTrend, Evaluation, Verdict } from './types.ts';
@@ -180,7 +180,7 @@ export function saveEvaluation(s: CoachState, args: { focus_skill: string; reaso
   if (!SKILL_IDS.includes(skill)) return { error: `focus_skill must be one of: ${SKILL_IDS.join(', ')}` };
   const allowed = s.candidates!.length ? s.candidates!.map((c) => c.skill) : SKILL_IDS;
   if (!allowed.includes(skill)) return { error: `focus_skill must be a weakness this session showed: ${allowed.join(', ')}` };
-  const reason = cleanText(args.reason || '').replace(/\s+([.,;:])/g, '$1');
+  const reason = plainReason(cleanText(args.reason || ''));
   if (!reason) return { error: 'reason is required: one sentence tied to the evidence' };
   const known = new Set((s.input.session.evidence || []).map((e) => e.id));
   const evidenceIds = (args.evidence_ids || []).map((x) => String(x).toUpperCase()).filter((x) => known.has(x));
@@ -361,7 +361,7 @@ export function createTools(s: CoachState, clock: () => number = Date.now): Coac
       'Save the single highest-priority skill for this tutor to work on next, with a one-sentence reason and the evidence ids behind it. Optionally leave a short note for yourself for the next session.',
       {
         focus_skill: { type: 'string', description: 'one skill id', enum: SKILL_IDS },
-        reason: { type: 'string', description: 'one sentence, specific to this session' },
+        reason: { type: 'string', description: 'one plain sentence the tutor will read, specific to this session; put evidence ids in evidence_ids, not here' },
         evidence_ids: { type: 'string[]', description: 'evidence ids (E1, E2, ...) supporting it', optional: true },
         note_for_next_time: { type: 'string', description: 'a short note to read at the start of the next review', optional: true },
       },
@@ -372,7 +372,7 @@ export function createTools(s: CoachState, clock: () => number = Date.now): Coac
         retry_previous: { type: 'boolean', description: 'reuse the previous challenge for another attempt', optional: true },
         title: { type: 'string', description: 'short name, e.g. "The quiet student"', optional: true },
         goal: { type: 'string', description: 'one sentence the tutor sees during the session', optional: true },
-        student_profile: { type: 'string', description: 'how the simulated student behaves (realistic, specific)', optional: true },
+        student_profile: { type: 'string', description: 'how the simulated student behaves (realistic, specific); the student plays this role and the tutor sees it as "Your student"', optional: true },
         misconception: { type: 'string', description: 'a wrong belief the student starts with, if relevant', optional: true },
         topic: { type: 'string', description: 'topic to teach (default: same topic)', optional: true },
         level_id: { type: 'string', description: 'student level (default: same level)', optional: true, enum: ['kindergarten', 'middle', 'high', 'college', 'expert'] },

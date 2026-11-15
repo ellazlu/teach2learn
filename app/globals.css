@@ -275,6 +275,9 @@ details summary { cursor: pointer; font-weight: 550; color: var(--ink-2); list-s
 .challenge-card .next, .current { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .challenge-card .btn.large, .current .btn.large { margin-top: 6px; }
 .challenge-card .fine, .current .fine { margin-top: 0; }
+.persona { width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 8px 12px; }
+.persona-label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 2px; }
+.persona p { font-size: 13px; color: var(--ink-2); line-height: 1.5; }
 .outcome { padding-bottom: 12px; border-bottom: 1px solid var(--line); }
 .criteria { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
 .crit { display: inline-block; width: 18px; font-weight: 700; }

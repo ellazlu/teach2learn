@@ -301,5 +301,13 @@ export function templateDraft(skill: Skill, ctx: { topic: string; levelId: Level
   };
 }
 
+// Evidence ids (E3) are for the coach and the logs, not for the tutor to read.
+export function plainReason(t: string): string {
+  return String(t || '')
+    .replace(/\s*\((?:\s*E\d+\s*(?:,|and)?\s*)+\)/gi, '')
+    .replace(/\s+([.,;:])/g, '$1')
+    .trim();
+}
+
 export const ratingMetric = (c: Category): Metric => `rating_${c}` as Metric;
 export { CATEGORIES };
