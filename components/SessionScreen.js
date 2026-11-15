@@ -14,6 +14,7 @@ import { IDLE_MS, shouldAnalyze } from '../lib/learner/whiteboard.ts';
 
 // Streams the student's reply text; calls onText for each chunk.
 async function streamReply(body, onText, signal) {
+  // (L2T Daily adds the attempt token to the body; see start())
   const res = await fetch('/api/reply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Reply failed (${res.status})`);
   const reader = res.body.getReader();
@@ -90,10 +91,13 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
     const player = createPlayer({ level, now, onError: (m) => setVoiceNote(`Natural voice unavailable (${m}); using the browser voice.`) });
     playerRef.current = player;
     let gate = Promise.resolve();
+    // L2T Daily: every live call carries the attempt token so the server can
+    // record what it evaluated and score the attempt itself.
+    const daily = setup.daily?.token ? { daily: setup.daily.token } : {};
     const engine = new SessionEngine(level.id, {
-      evaluate: (body) => postJSON('/api/evaluate', body),
-      verify: (body) => postJSON('/api/verify', body),
-      reply: streamReply,
+      evaluate: (body) => postJSON('/api/evaluate', { ...body, ...daily }),
+      verify: (body) => postJSON('/api/verify', { ...body, ...daily }),
+      reply: (body, onText, signal) => streamReply({ ...body, ...daily }, onText, signal),
       voice: {
         begin: () => (gate = pauseMicForStudent()),
         sentence: (text) => player.sentence(text, gate),
@@ -349,16 +353,18 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
         <div className="session-meta">
           <span className={`timer ${remaining <= 15 ? 'low' : ''}`}>{formatTime(remaining)}</span>
           <span className="muted">
-            <span className="mode-tag">{MODE_NAME[study ? 'student' : 'educator']}</span>
+            <span className="mode-tag">{setup.daily ? 'L2T Daily' : MODE_NAME[study ? 'student' : 'educator']}</span>
             {study ? `Explaining to a ${level.label.toLowerCase()}` : `Teaching a ${level.label.toLowerCase()}`}
             {setup.topic ? ` · ${setup.topic}` : ''}
           </span>
         </div>
         <div className="session-actions">
-          <label className="switch">
-            <input type="checkbox" checked={questionsOn} onChange={toggleQuestions} />
-            <span>Student questions</span>
-          </label>
+          {!setup.daily && (
+            <label className="switch">
+              <input type="checkbox" checked={questionsOn} onChange={toggleQuestions} />
+              <span>Student questions</span>
+            </label>
+          )}
           <button className="btn-text" onClick={cancel} disabled={phase === 'finishing'}>Cancel</button>
           <button className="btn primary" onClick={finish} disabled={phase === 'finishing'}>
             {phase === 'finishing' ? 'Wrapping up…' : 'End session'}

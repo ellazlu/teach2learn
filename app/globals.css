@@ -270,7 +270,7 @@ details summary { cursor: pointer; font-weight: 550; color: var(--ink-2); list-s
 .crit-label { font-weight: 600; }
 .ratings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .rating { border: 1px solid var(--line); border-radius: var(--r); padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
-.rating-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.rating-top { display: flex; justify-content: space-between; align-items: baseline; gap: 4px 8px; flex-wrap: wrap; }
 .rating-label { font-weight: 600; font-size: 14px; }
 .rating-score { font: 650 24px/1 var(--font); font-variant-numeric: tabular-nums; }
 .rating-score .of { font-size: 13px; font-weight: 500; color: var(--faint); margin-left: 1px; }
@@ -423,6 +423,24 @@ table.data tr.clickable:hover td { background: var(--surface); }
 .study-progress h3 { font-size: 16px; margin-bottom: 4px; }
 .topic-title { font-size: 17px; }
 
+/* ---- L2T Daily --------------------------------------------------------------------- */
+.daily { max-width: 1000px; margin: 0 auto; }
+.daily .panel { border: 1px solid var(--line); border-radius: var(--r); padding: 16px 18px; }
+.daily-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+.daily-challenge h2 { font-size: 26px; margin: 2px 0 6px; }
+.daily-challenge .label { margin-top: 14px; }
+.objectives { margin: 6px 0 16px; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
+.daily-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 12px 0; margin-bottom: 16px; }
+.daily-stats > div { display: flex; flex-direction: column; gap: 2px; }
+.daily-stats .stat-k { font-size: 12px; color: var(--muted); }
+.daily-stats .stat-v { font-size: 18px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.daily-stats .mono { font: 600 15px var(--mono); }
+.daily-start { display: flex; gap: 10px; }
+.daily-start .input { flex: 1; }
+.daily-board tr.me td { background: var(--surface); }
+.daily-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; border: 1px solid var(--line-2); border-radius: var(--r); padding: 10px 14px; font-size: 14px; }
+.daily-banner .btn-text { margin-left: auto; }
+
 /* ---- History ------------------------------------------------------------------------- */
 .history { max-width: 760px; }
 .page-head { display: grid; grid-template-columns: 80px 1fr 80px; align-items: center; margin-bottom: 20px; }
@@ -447,6 +465,9 @@ table.data tr.clickable:hover td { background: var(--surface); }
   .ratings { grid-template-columns: 1fr; gap: 10px; }
   .scores { grid-template-columns: 1fr; }
   .mode-pick { grid-template-columns: 1fr; }
+  .daily-grid { grid-template-columns: 1fr; }
+  .daily-stats { grid-template-columns: 1fr 1fr; }
+  .daily-start { flex-direction: column; }
   .checklist-live:not([open]) .concept-list { display: none; }
   .board-list li { grid-template-columns: 1fr; }
   .topnav { gap: 14px; }

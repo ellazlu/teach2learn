@@ -15,7 +15,7 @@ const STATUS_CLS = {
 };
 const MIS = { active: 'Still believes', partially_addressed: 'Unsure now', resolved: 'Corrected' };
 
-export default function ResultsScreen({ entry, attemptNumber, isHistory, footer, nextChallenge, attemptedChallenge, onStartChallenge, onRetryCoach }) {
+export default function ResultsScreen({ entry, attemptNumber, isHistory, footer, nextChallenge, attemptedChallenge, onStartChallenge, onRetryCoach, banner = null }) {
   if (entry.version !== 4) return <LegacyResults entry={entry} isHistory={isHistory} footer={footer} />;
   const level = getLevel(entry.levelId);
   const { teaching, concepts, metrics, finalModel } = entry;
@@ -34,6 +34,8 @@ export default function ResultsScreen({ entry, attemptNumber, isHistory, footer,
         </p>
         <h1>{entry.topicTitle}</h1>
       </header>
+
+      {banner}
 
       <section className="scores" aria-label="Scores">
         <div className="overall">

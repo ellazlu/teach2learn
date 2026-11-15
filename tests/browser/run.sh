@@ -9,3 +9,4 @@ mkdir -p tests/browser/out
 $ESBUILD tests/browser/harness.jsx --bundle --loader:.js=jsx --jsx=automatic --outfile=tests/browser/out/app.js --log-level=error
 node tests/browser/run.mjs
 node tests/browser/study.mjs
+node tests/browser/daily.mjs

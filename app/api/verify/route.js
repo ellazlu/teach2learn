@@ -3,6 +3,7 @@ import { callJSON, MODELS } from '../../../lib/claude.js';
 import { getLevel } from '../../../lib/levels.ts';
 import { verifySystem, verifyUserText, VERIFY_SCHEMA } from '../../../lib/prompts.js';
 import { badRequest, serverError } from '../../../lib/http.js';
+import { recordVerify } from '../../../lib/daily/record.ts';
 
 // Grades a student demonstration (explain-back, new example, or answer)
 // against the concept's correct description. The status change itself is
@@ -20,11 +21,10 @@ export async function POST(req) {
       schema: VERIFY_SCHEMA,
       maxTokens: 200,
     });
-    const verdict = String(out.verdict || '').toLowerCase();
-    return NextResponse.json({
-      verdict: ['demonstrated', 'partial', 'not_demonstrated'].includes(verdict) ? verdict : 'not_demonstrated',
-      note: String(out.note || '').trim(),
-    });
+    const raw = String(out.verdict || '').toLowerCase();
+    const verdict = ['demonstrated', 'partial', 'not_demonstrated'].includes(raw) ? raw : 'not_demonstrated';
+    if (body.daily) await recordVerify(body.daily, body.concept?.name, body.mode, verdict); // L2T Daily
+    return NextResponse.json({ verdict, note: String(out.note || '').trim() });
   } catch (err) {
     return serverError(err);
   }

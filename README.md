@@ -1,6 +1,10 @@
 # teach2learn
 
-Learn it by teaching it. Pick a topic (optionally upload notes), choose who you're teaching, press **Start session** and explain it out loud for about two minutes. A simulated student listens, asks real questions, holds a misconception or two, and has to show it understood. Then you get three 1–5 ratings, three lines of feedback, a summary of what the student actually demonstrated, and a practice challenge from a coach that tracks you across sessions. Think flight simulator for tutors.
+Two complementary modes, one voice conversation with a simulated student:
+
+- **Learn to Teach — Educator.** Become a better educator. Teach a realistic student for about two minutes; it asks real questions, holds a misconception or two, and has to show it understood. You get an overall score and three category scores out of 100, three lines of feedback, and a practice challenge from a coach that tracks you across sessions.
+- **Teach to Learn — Student.** Master concepts by explaining them. Review a short checklist of the key ideas, then explain them to a curious student whose questions expose gaps in your own understanding. Optional whiteboard. Content-only feedback: what you got right, gaps, misconceptions, what to review next.
+- **L2T Daily.** Everyone teaches the same subject to the same student each day, scored out of 100 on the server, with a shared leaderboard.
 
 ## Run it
 
@@ -47,16 +51,16 @@ A failed attempt never upgrades the status, and mastery numbers are never shown 
 ### Feedback
 There are exactly three items about your teaching (**What went well / What to improve / Try next time**). Each one cites a timestamped piece of transcript evidence from the session; code rejects citations that don't exist or are of the wrong kind, and falls back to a deterministic choice. The concept summary uses only the three labels above. Teaching feedback and student learning are kept separate.
 
-### Ratings
-Three categories, each 1–5 or **Not enough evidence**, computed by fixed rules in `lib/coach/rubric.ts` (no LLM), so the same session always gets the same score and sessions are comparable. Each rating shows one explanation (the factor that decided it) and the evidence behind it.
+### Scores (Learn to Teach)
+Each category is 0–100 (or **Not enough evidence**), computed by fixed, weighted criteria in `lib/coach/rubric.ts` from measured session evidence (no LLM), so the same session always gets the same scores. **Overall = 30% Engagement + 30% Communication + 40% Teaching effectiveness.** A criterion that can't be judged in a session (e.g. the student asked no questions) is marked n/a and its weight is spread over the others; a category with less than 40 points of judgeable criteria isn't rated.
 
-| Category | Starts at | Moves when |
-|---|---|---|
-| Engagement | 3 | +1 you checked understanding / asked the student to think (once is enough; more isn't rewarded) · +1 answered ≥75% of its questions, −1 under 50% · −1 a 90s+ stretch with no check-in · −1 the student never got to take part |
-| Communication | 4 | −1 per unexplained term (max −2) · −1 an unclear/over-level explanation (−2 for 3+) · −1 very frequent fillers or very fast pace, **only when measured** · +1 everything explained was clear |
-| Teaching effectiveness | 3 | −1 per inaccurate explanation (max −2) · +1 the student demonstrated a concept · +1 a misconception resolved, −1 one it voiced left standing · −1 nothing actually explained · +1 a concrete example · **capped at 4 without a demonstration** (explaining ≠ learning) |
+| Category | Criteria (points) |
+|---|---|
+| Engagement | Checked understanding (25: none 0, once 70%, twice+ full) · Answered the student's questions (35: share answered, partial = half) · Let the student take part (25: longest stretch ≤60s full, 60–90s 60%, >90s 20%) · Responded to wrong ideas the student voiced (15) |
+| Communication | Clear explanations (40: share the student could follow) · Level-appropriate language (25: unexplained terms *beyond the student's level*: 0 full, then 80/60/40%) · Logical order (20: ideas explained after what they build on) · Pace and fluency (15: only when measured) |
+| Teaching effectiveness | Accuracy (30: −40% per factual error or agreeing with a wrong idea) · Explained the why (25: share of accurate explanations that covered the essential idea and its reason) · Covered the key ideas (15) · Student showed understanding (20: one concept 70% + share demonstrated) · Fixed wrong ideas (10) |
 
-Under 40 words from the tutor → every category is "Not enough evidence"; Teaching also needs the topic's concepts to come up. Pauses, accents and speaking style are never inputs.
+Fairness rules: students know their level's vocabulary and prerequisites (`knows` in `lib/levels.ts`), and code never counts those words as jargon; concise, accurate explanations get full marks (length earns nothing); any factual error is "incorrect" and accurate-but-shallow explanations are tracked separately; pauses, accents and speaking style are never inputs. Under 40 words from the tutor → "Not enough evidence". Scores saved under the old 1–5 rubric are recomputed from the saved session data.
 
 ### The coach (LangChain Deep Agents)
 After feedback is shown, the browser posts the session to `/api/coach`. It never runs during a live session.
@@ -71,6 +75,20 @@ After feedback is shown, the browser posts the session to `/api/coach`. It never
 A challenge (`lib/coach/challenges.ts`) has a skill, a goal shown during the session, a student profile the simulated student plays, an optional starting misconception, and criteria over fixed metrics (check-ins, longest stretch, questions answered, unexplained terms, unclear/incorrect explanations, misconceptions resolved, concepts demonstrated, ratings). Criteria are measured with the same facts as the ratings, so attempts are comparable. Difficulty goes up after a fully met attempt and down after a missed one.
 
 `lib/progress.ts` keeps, per browser: each session's date, topic, level, ratings, speech metrics, feedback, end-of-session student state and the coach's focus; the challenges with every attempt; and the last coach log. Sessions saved before this existed are added from their saved data. Unmeasured values stay empty (gaps in the chart), never estimated. **Progress** shows the three ratings over time (with a table view), the current challenge and how attempts compare, recurring areas (in ≥2 of the last 5 rated sessions: improving / still showing up), and recent sessions.
+
+## Teach to Learn
+1. **Checklist.** `/api/prepare` (mode `student`) extracts 5–10 short concept names, prerequisites first, from the topic or uploaded notes (notes win). You can rename, add, remove and reorder them. Only names are shown; each concept's hidden description is what your explanations are judged against.
+2. **Session.** Same voice, avatar, turn-taking and background evaluation as Learn to Teach (`SessionEngine` with `mode: 'student'`). Code picks each question (`lib/learner/probes.ts`): clear up an unreadable drawing → question an error you made (without correcting you) → follow up on a half-answered question → the student's own misconception → your drawing → probe the concept you're on one level deeper (what → why/how → connections/assumptions → a new case) → a skipped prerequisite → curiosity about the next item. Depth rises when you answer well and drops after an error. The reply prompt keeps it a curious student, never an examiner, and never gives answers.
+3. **Live checklist** (`lib/learner/tracker.ts`): Not covered → Discussed → Demonstrated. Demonstrated needs an accurate explanation **and** a follow-up question answered fully and correctly, with no error left uncorrected. Your own checkmarks are separate.
+4. **Whiteboard** (optional): pen, eraser, colours, undo/redo, clear; mouse, touch or stylus. A snapshot is read by a vision model (`/api/whiteboard`) only when you press **Show the student**, after you stop drawing for 3.5s (at most every 12s, only if it changed), or at the end. What it reads is evaluated exactly like speech, so it counts on the checklist; the student can ask about it; anything it can't read becomes a question instead of a guess.
+5. **Feedback** (`/api/study-feedback`): correct understanding, knowledge gaps, misconceptions (quoted), what to review next, plus each concept as Demonstrated / Partial / Not yet verified. No delivery metrics, scores or percentages. Citations are checked; deterministic fallback.
+6. **Study planner** (`/api/study-plan`, Deep Agents, separate from the coach): tools `get_session_overview`, `get_concept_evidence`, `get_whiteboard_evidence`, `search_material`, `get_previous_study_sessions`, `rank_knowledge_gaps`, `save_gap_analysis` (misconceptions must quote your exact words), `save_practice` (must not contain the answer). **Retry this explanation** opens a new session where the student starts with that question. Deterministic fallback as for the coach.
+7. **Progress** is stored separately (`lib/study/progress.ts`): topics, latest status per concept, remaining gaps, practice attempts. Progress and History have a Learn to Teach / Teach to Learn switch.
+
+## L2T Daily
+- **Same for everyone:** `lib/daily/schedule.ts` picks the day's challenge from a fixed list by UTC date (rotates; resets at midnight UTC). Each has a fixed topic, level, three objectives and a fixed concept list with the student's misconceptions, so every attempt starts from the same student knowledge. Sessions are normal Learn to Teach sessions (student questions can't be turned off) scored with the standard rubric.
+- **Server-side scoring:** `/api/daily/start` issues an HMAC-signed, single-use attempt token and a signed anonymous user id (the username is just a display name). During the session, `/api/evaluate`, `/api/reply` and `/api/verify` record what the server itself produced for that token. `/api/daily/submit` rebuilds the student model from those records, keeps only transcript lines that match what the server evaluated or what the student said, and computes the score. The client never sends a score. Also: time checks (≥45s, within the time limit + 15 min), 15 attempts per user per day, 80 recorded events per attempt.
+- **Leaderboard:** best eligible attempt per user per day, ranked by score then time. Storage: Redis over REST if `UPSTASH_REDIS_REST_URL/_TOKEN` (or Vercel KV's `KV_REST_API_URL/_TOKEN`) are set; otherwise a JSON file on the server (`DAILY_DATA_FILE`). **For a deployed, multi-instance app, set the Redis variables.**
 
 ### Voice
 - **ElevenLabs Flash v2.5** (set `ELEVENLABS_API_KEY`): proxied through `/api/tts`, which keeps the key on the server. Each sentence's audio is fetched as soon as the sentence is written and played back-to-back.
@@ -88,13 +106,15 @@ A challenge (`lib/coach/challenges.ts`) has a skill, a goal shown during the ses
 | Streaming text → sentences | `lib/student/sentences.ts` |
 | Speech metrics, evidence + feedback | `lib/student/speech.ts`, `evidence.ts` |
 | Prompts | `lib/prompts.js` |
-| Routes | `app/api/{prepare,evaluate,reply,verify,tts,feedback,coach}` |
+| Routes | `app/api/{prepare,evaluate,reply,verify,tts,feedback,coach}`; Teach to Learn `whiteboard`, `study-feedback`, `study-plan`; Daily `daily`, `daily/start`, `daily/submit` |
+| Teach to Learn | `lib/learner/*` (checklist, tracker, probes, feedback, whiteboard, prompts), `lib/study/*` (planner, progress) |
+| L2T Daily | `lib/daily/*` (schedule, service, store, record) |
 | Ratings rubric | `lib/coach/rubric.ts` |
 | Coach: tools, agent, fallback | `lib/coach/tools.ts`, `agent.ts`, `fallback.ts` |
 | Challenges + criteria | `lib/coach/challenges.ts` |
 | Tutor progress (localStorage) | `lib/progress.ts`, `lib/coach/record.ts` |
 | Voice playback | `lib/voice.js` |
-| UI | `components/` (incl. `ProgressScreen.js`), `app/globals.css` |
+| UI | `components/` (incl. `ProgressScreen.js`, `ChecklistScreen.js`, `ConceptChecklist.js`, `Whiteboard.js`, `StudyResults.js`, `StudyProgress.js`, `DailyScreen.js`), `app/globals.css` |
 | Persistence (localStorage, v4 + migration) | `lib/history.ts` |
 
 ## Avatar
@@ -109,8 +129,8 @@ Each level can have its own character: put its frames in `public/avatar/<level>/
 ```bash
 npm test                    # unit + engine tests (node:test)
 npm run typecheck
-bash tests/routes/run.sh    # real route handlers with stubbed Next/SDK/ElevenLabs
-bash tests/browser/run.sh   # real UI in headless Chromium with simulated mic/voice/API (+ latency)
+bash tests/routes/run.sh    # real route handlers with stubbed Next/SDK/ElevenLabs (incl. Daily with a file store)
+bash tests/browser/run.sh   # real UI in headless Chromium: Learn to Teach, Teach to Learn, L2T Daily
 ```
 
 ### Manual test (needs real keys, Chrome, and a mic)
@@ -118,7 +138,7 @@ bash tests/browser/run.sh   # real UI in headless Chromium with simulated mic/vo
 2. Say "plants make their own food from sunlight". The student should push back with its misconception within about 2 seconds.
 3. Correct it ("no, the soil only gives water…"). The student should react to your answer, and the panel should show **Corrected**.
 4. Ask "does that make sense?" The student should explain it back, and the panel should show **Demonstrated** if the explanation was right.
-5. Use an undefined term ("thylakoid"), then end the session. **What to improve** should cite that moment, and Communication should be 3/5.
+5. Use an undefined term ("thylakoid"), then end the session. **What to improve** should cite that moment, and Communication should lose a few points (see "Evidence and how ratings work").
 6. Within a few seconds the **Next challenge** card should fill in. The server log shows `[coach] … step agent: Deep Agents run started` if the agent ran, or `fallback` and the reason if it didn't.
 7. Start the challenge, then check that its result appears on the next results page and in **Progress**.
 
@@ -126,5 +146,7 @@ bash tests/browser/run.sh   # real UI in headless Chromium with simulated mic/vo
 - Measured latency (below) uses simulated API timings. Real latency also includes Chrome's speech finalization (~0.5s) and network.
 - Speech recognition is Chrome-first and English. Pauses, fillers and pace come from recognition events.
 - Mastery and verification are simulated estimates, not measurements of learning.
-- History and progress are per-browser (localStorage).
+- History and progress are per-browser (localStorage). The L2T Daily leaderboard is server-side.
+- L2T Daily anti-cheat is basic: someone can still type or script good explanations into the live session (typing is allowed by design), and a reply that the client replaces with its built-in fallback line isn't recorded server-side. Usernames aren't unique or moderated.
+- The whiteboard, the Teach to Learn student and the study planner have only been tested with stand-ins for the models.
 - The Deep Agents path was built against the documented `deepagents` / `langchain` JS API but has not been run against the real packages and model yet; it's covered by tests with a stand-in agent. The deterministic coach is fully tested.

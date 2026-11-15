@@ -17,6 +17,9 @@ import ChecklistScreen from '../components/ChecklistScreen';
 import StudyResults from '../components/StudyResults';
 import StudyProgress, { StudyHistoryList } from '../components/StudyProgress';
 import { MODE_NAME } from '../lib/learner/types.ts';
+// L2T Daily
+import DailyScreen, { DailyBanner, loadDailyUser, saveDailyUser } from '../components/DailyScreen';
+import { sanitizeExtraction } from '../lib/student/knowledge.ts';
 import { applyChecklist, toChecklist } from '../lib/learner/checklist.ts';
 import { initLearner } from '../lib/learner/tracker.ts';
 import { topicKeyOf } from '../lib/study/types.ts';
@@ -65,6 +68,8 @@ export default function Home() {
   const [studyPlans, setStudyPlans] = useState({}); // record id -> plan (this browser session)
   const studyHistoryRef = useRef([]);
   const studyProfileRef = useRef(null);
+  const [dailyStarting, setDailyStarting] = useState(false);
+  const [dailyError, setDailyError] = useState('');
   const historyRef = useRef([]);
   const profileRef = useRef(null);
   const setupRef = useRef(null);
@@ -229,9 +234,44 @@ export default function Home() {
       updateProfile((p) => addRecordToProfile(p, record));
       setCurrentId(record.id);
       setScreen('results');
+      if (s.daily) submitDaily(record, s.daily); // L2T Daily: the server scores it
       runCoachFor(record); // background
     } catch (e) {
       setError(e.message);
+    }
+  }
+
+  // ---- L2T Daily -------------------------------------------------------------------------
+  // A Learn to Teach session on today's shared challenge; scored on the server.
+
+  async function startDaily(username) {
+    setDailyError('');
+    setDailyStarting(true);
+    try {
+      const u = loadDailyUser() || {};
+      const res = await postJSON('/api/daily/start', { username, userId: u.userId, userSig: u.userSig });
+      saveDailyUser({ userId: res.userId, userSig: res.userSig, username: res.username });
+      const ch = res.challenge;
+      setMode('educator');
+      setSetup({ mode: 'educator', topic: ch.topic, levelId: ch.levelId, timeLimitSec: ch.timeLimitSec, sources: [], focus: '', topicId: `daily-${ch.day}`, challenge: null, daily: { token: res.token, day: ch.day, challengeId: ch.id } });
+      setExtraction(sanitizeExtraction(ch.extraction, false)); // same starting knowledge for everyone
+      setCurrentId(null);
+      setScreen('session');
+    } catch (e) {
+      setDailyError(e.message);
+    } finally {
+      setDailyStarting(false);
+    }
+  }
+
+  async function submitDaily(record, daily) {
+    patchRecord(record.id, { daily: { status: 'pending', day: daily.day } });
+    try {
+      const u = loadDailyUser() || {};
+      const r = await postJSON('/api/daily/submit', { token: daily.token, userId: u.userId, userSig: u.userSig, utterances: record.utterances });
+      patchRecord(record.id, { daily: { status: 'done', ...r } });
+    } catch (e) {
+      patchRecord(record.id, { daily: { status: 'failed', day: daily.day, error: e.message } });
     }
   }
 
@@ -354,12 +394,12 @@ export default function Home() {
 
   // Repeat the same lesson as a plain session (no challenge scenario).
   function teachAgain() {
-    setSetup((s) => ({ ...s, challenge: null }));
+    setSetup((s) => ({ ...s, challenge: null, daily: null }));
     setScreen('session');
   }
 
   function openPage(name) {
-    if (!['history', 'history-detail', 'progress', 'study-detail'].includes(screen)) setReturnTo(screen);
+    if (!['history', 'history-detail', 'progress', 'study-detail', 'daily'].includes(screen)) setReturnTo(screen);
     if (name === 'progress' || name === 'history') setViewMode(mode);
     setScreen(name);
   }
@@ -406,6 +446,7 @@ export default function Home() {
             {active && mode === 'educator' && screen !== 'results' && (
               <button className="btn-text" onClick={() => startChallenge(active)}>Next challenge</button>
             )}
+            <button className="btn-text" onClick={() => openPage('daily')}>L2T Daily</button>
             <button className="btn-text" onClick={() => openPage('progress')}>Progress</button>
             <button className="btn-text" onClick={() => openPage('history')}>
               History{(mode === 'student' ? studyHistory.length : history.length) > 0 && <span className="count">{mode === 'student' ? studyHistory.length : history.length}</span>}
@@ -461,6 +502,8 @@ export default function Home() {
             )}
           </div>
         )}
+
+        {screen === 'daily' && <DailyScreen onStart={startDaily} starting={dailyStarting} error={dailyError} onBack={back} />}
 
         {screen === 'study-feedback' && (
           <div className="center-block">
@@ -543,6 +586,7 @@ export default function Home() {
         {screen === 'results' && current && (
           <ResultsScreen
             {...resultsProps(current)}
+            banner={<DailyBanner daily={current.daily} onOpen={() => openPage('daily')} />}
             footer={
               <div className="footer-actions">
                 <button className="btn-text" onClick={() => openPage('progress')}>See progress</button>
@@ -576,6 +620,7 @@ export default function Home() {
         {screen === 'history-detail' && viewing && (
           <ResultsScreen
             {...resultsProps(viewing)}
+            banner={<DailyBanner daily={viewing.daily} onOpen={() => openPage('daily')} />}
             isHistory
             footer={
               <div className="footer-actions">

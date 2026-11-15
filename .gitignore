@@ -6,3 +6,4 @@ node_modules
 *.tsbuildinfo
 tests/browser/out
 tests/routes/out
+.data/

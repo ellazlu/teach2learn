@@ -15,6 +15,10 @@ import { buildStudyEvidence, fallbackStudyFeedback, reviewCandidates } from '../
 import { cleanBoard } from '../../lib/learner/whiteboard.ts';
 import { createPlannerState } from '../../lib/study/tools.ts';
 import { runFallbackPlanner } from '../../lib/study/fallback.ts';
+import { publicChallenge, dayKey, nextResetAt } from '../../lib/daily/schedule.ts';
+
+// L2T Daily stand-in (the real server logic is checked in tests/routes/daily-check.mjs).
+window.__daily = { board: [], starts: [], submits: [], tokensSeen: new Set() };
 
 // Teach to Learn checklist: the three fixture concepts plus three more.
 const STUDY_EXT = cleanStudyExtraction({
@@ -139,6 +143,26 @@ window.fetch = async (url, opts = {}) => {
     window.__calls.prepare.push(body);
     await sleep(80);
     return json(body.mode === 'student' ? STUDY_EXT : EXTRACTION);
+  }
+  if (body.daily) window.__daily.tokensSeen.add(`${url}:${body.daily}`);
+  if (String(url).startsWith('/api/daily') && method === 'GET') {
+    const now = Date.now();
+    const entries = [...window.__daily.board].sort((a, b) => b.score - a.score).map((e, i) => ({ rank: i + 1, username: e.username, score: e.score, me: e.me }));
+    return json({ challenge: publicChallenge(dayKey(now)), leaderboard: { day: dayKey(now), total: entries.length, entries, me: entries.find((e) => e.me) || null }, now, nextResetAt: nextResetAt(now), storage: 'redis' });
+  }
+  if (url === '/api/daily/start') {
+    window.__daily.starts.push(body);
+    return json({ token: `tok-${window.__daily.starts.length}`, userId: 'a'.repeat(20), userSig: 'sig', username: body.username, challenge: publicChallenge(dayKey(Date.now())) });
+  }
+  if (url === '/api/daily/submit') {
+    window.__daily.submits.push(body);
+    const score = 70 + window.__daily.submits.length;
+    const mine = window.__daily.board.find((e) => e.me);
+    if (!mine) window.__daily.board.push({ username: 'Ada', score, me: true });
+    else mine.score = Math.max(mine.score, score);
+    if (!window.__daily.board.some((e) => !e.me)) window.__daily.board.push({ username: 'Bea', score: 64, me: false });
+    const best = window.__daily.board.find((e) => e.me).score;
+    return json({ day: dayKey(Date.now()), score, breakdown: {}, eligible: true, reasons: [], droppedLines: 0, best: { score: best }, rank: 1, total: window.__daily.board.length });
   }
   if (url === '/api/evaluate') {
     window.__calls.evaluate++;

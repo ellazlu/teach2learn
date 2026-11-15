@@ -3,6 +3,7 @@ import { getLevel } from '../../../lib/levels.ts';
 import { replySystem, replyUserText } from '../../../lib/prompts.js';
 import { serverError } from '../../../lib/http.js';
 import { learnerReplySystem, learnerReplyUserText } from '../../../lib/learner/prompts.js';
+import { recordReply } from '../../../lib/daily/record.ts';
 
 // The student's spoken reply, streamed as plain text. The app already chose
 // what kind of reply this is (lib/student/turns.ts); this only phrases it,
@@ -21,7 +22,22 @@ export async function POST(req) {
       maxTokens: 160,
       signal: req.signal,
     });
-    return new Response(stream, { headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' } });
+    const headers = { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' };
+    if (!body.daily) return new Response(stream, { headers });
+    // L2T Daily: record what the student actually said, once the reply finished
+    // streaming (a reply the user talked over is aborted and not recorded).
+    let text = '';
+    const dec = new TextDecoder();
+    const tap = new TransformStream({
+      transform(chunk, ctl) {
+        text += dec.decode(chunk, { stream: true });
+        ctl.enqueue(chunk);
+      },
+      async flush() {
+        if (!req.signal?.aborted && text.trim()) await recordReply(body.daily, body.intent, text, body.details);
+      },
+    });
+    return new Response(stream.pipeThrough(tap), { headers });
   } catch (err) {
     return serverError(err);
   }
