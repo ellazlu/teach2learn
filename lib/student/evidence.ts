@@ -12,6 +12,8 @@ import { fmt } from './speech.ts';
 export type EvidenceKind =
   | 'undefined_term'
   | 'incorrect_explanation'
+  | 'shallow_explanation'
+  | 'accurate_explanation'
   | 'unclear_explanation'
   | 'open_question'
   | 'demonstrated'
@@ -69,6 +71,8 @@ export function buildEvidence({ initial, final, events, metrics, learning }: Evi
 
   for (const e of events) {
     if (e.type === 'undefined_term') push({ kind: 'undefined_term', at: e.at, label: `Used "${e.term}" without explaining it to ${level.who}.`, quote: e.quote, positive: false });
+    if (e.type === 'shallow_explanation') push({ kind: 'shallow_explanation', at: e.at, label: `Explanation of ${name(e.conceptId)} was accurate but incomplete: it missed an essential part or the reason behind it${e.gap ? ` (left open: "${e.gap}")` : ''}.`, quote: e.quote, positive: false });
+    if (e.type === 'accurate_explanation') push({ kind: 'accurate_explanation', at: e.at, label: `Explained ${name(e.conceptId)} accurately, covering the essential idea.`, quote: e.quote, positive: true });
     if (e.type === 'incorrect_explanation') push({ kind: 'incorrect_explanation', at: e.at, label: `Explanation of ${name(e.conceptId)} doesn't match the material.`, quote: e.quote, positive: false });
     if (e.type === 'unclear_explanation') {
       const what = e.levelFit === 'too_advanced' ? `too advanced for ${level.who}` : 'hard to follow';
@@ -149,10 +153,11 @@ export interface ThreeItems {
 }
 
 // Most meaningful first.
-export const STRENGTH_ORDER: EvidenceKind[] = ['misconception_resolved', 'demonstrated', 'question_answered', 'checked_understanding', 'used_example', 'mastery_gain'];
+export const STRENGTH_ORDER: EvidenceKind[] = ['misconception_resolved', 'demonstrated', 'question_answered', 'accurate_explanation', 'checked_understanding', 'used_example', 'mastery_gain'];
 export const WEAKNESS_ORDER: EvidenceKind[] = [
   'incorrect_explanation',
   'misconception_unaddressed',
+  'shallow_explanation',
   'demo_failed',
   'question_unanswered',
   'open_question',
@@ -183,9 +188,11 @@ const WELL: Partial<Record<EvidenceKind, string>> = {
   checked_understanding: 'You stopped to check whether the student was following.',
   used_example: 'You used a concrete example, which made the idea easier to grasp.',
   mastery_gain: 'Your explanation was clear enough for the student to start getting it.',
+  accurate_explanation: 'You explained a key idea accurately and to the point.',
 };
 const IMPROVE: Partial<Record<EvidenceKind, [string, string]>> = {
   incorrect_explanation: ['Part of your explanation didn\'t match the material.', 'Re-check that point in your notes, then explain it again in one or two sentences.'],
+  shallow_explanation: ['One explanation said what happens but not why, or skipped an essential part.', 'After stating an idea, add the one-sentence reason it works that way.'],
   misconception_unaddressed: ['The student voiced a wrong idea and still believes it.', 'When the student says something wrong, say clearly why it\'s wrong and what\'s true instead.'],
   demo_failed: ['When the student explained it back, they got it wrong.', 'Correct their explanation right away, then have them try once more.'],
   question_unanswered: ["You didn't answer the student's question.", 'Answer the student\'s question before moving on; if you can\'t, that\'s a gap to review.'],

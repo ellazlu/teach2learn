@@ -18,7 +18,8 @@ export interface SessionSummary {
   topic: string;
   levelId: LevelId;
   timeUsedSec: number;
-  ratings: Record<Category, number | null>;
+  ratings: Record<Category, number | null> & { overall?: number | null };
+  scale?: 100; // absent = saved under the old 1-5 rubric
   explanations: Record<Category, string>;
   metrics: {
     wpm: number | null;
@@ -57,8 +58,13 @@ export function loadProfile(store: Store | null = defaultStore()): TutorProfile 
     if (!raw || raw.version !== 1 || !Array.isArray(raw.sessions) || !Array.isArray(raw.challenges)) return emptyProfile();
     return {
       version: 1,
-      sessions: raw.sessions.filter((s: any) => s && s.id && s.at && s.ratings),
-      challenges: raw.challenges.filter((c: any) => c && c.id && c.skill && Array.isArray(c.attempts)),
+      // Old 1-5 summaries are dropped here; the page re-adds them from saved
+      // session records, rescored on the 0-100 rubric (never converted by guesswork).
+      sessions: raw.sessions.filter((s: any) => s && s.id && s.at && s.ratings && s.scale === 100),
+      challenges: raw.challenges
+        .filter((c: any) => c && c.id && c.skill && Array.isArray(c.attempts))
+        // Rating targets set under the old 1-5 rubric move to the 0-100 scale.
+        .map((c: any) => ({ ...c, criteria: (c.criteria || []).map((k: any) => (String(k.metric).startsWith('rating_') && k.target <= 5 ? { ...k, target: k.target * 20 } : k)) })),
       currentChallengeId: typeof raw.currentChallengeId === 'string' ? raw.currentChallengeId : null,
       lastCoachLog: raw.lastCoachLog || null,
       coachNotes: typeof raw.coachNotes === 'string' ? raw.coachNotes : '',
@@ -104,7 +110,8 @@ export function summarize(r: SummaryInput, scores: Scores, f: SessionFacts): Ses
     topic: r.topicTitle,
     levelId: r.levelId,
     timeUsedSec: r.timeUsedSec,
-    ratings: { engagement: scores.engagement.score, communication: scores.communication.score, teaching: scores.teaching.score },
+    ratings: { engagement: scores.engagement.score, communication: scores.communication.score, teaching: scores.teaching.score, overall: scores.overall },
+    scale: 100,
     explanations: { engagement: scores.engagement.explanation, communication: scores.communication.explanation, teaching: scores.teaching.explanation },
     metrics: {
       wpm: f.wpm,

@@ -40,7 +40,8 @@ function makeSession(id: string, at: string, o: { jargon?: number; monologue?: b
     m = v.model;
     events.push(...v.events);
   }
-  m = recordQuestion(m, { kind: 'question', type: 'clarify', conceptId: 'c1', misconceptionId: null, followsQuestionId: null, reason: '', score: 1 }, 'Where does the sugar go?', 80);
+  m = recordQuestion(m, { kind: 'question', type: 'clarify', conceptId: 'c1', misconceptionId: null, followsQuestionId: null, focus: null, reason: '', score: 1 } as any, 'Where does the sugar go?', 80);
+  if (o.demo) Object.assign(m.questions[m.questions.length - 1], { status: 'answered', answerQuote: 'it is stored in the leaves' }); // a good session answers it
   const utterances: Segment[] = o.monologue
     ? [T(words(260), 0, 100), { id: 's1', speaker: 'student', text: 'Where does the sugar go?', start: 102, end: 104 }]
     : [T(words(60) + (o.checks ? ' does that make sense?' : ''), 0, 30), T(words(60), 33, 60), { id: 's1', speaker: 'student', text: 'Where does the sugar go?', start: 80, end: 82 }];
@@ -79,7 +80,8 @@ test('tools return JSON, log each call, and report fixable errors', async () => 
   // Order is up to the agent: saving before analysis is rejected with a hint.
   assert.match((await call('save_practice_challenge', { title: 'x' })).error, /save_evaluation first/);
   const sc = await call('score_session');
-  assert.equal(sc.ratings.communication.score, 2, '4 - 2 undefined terms');
+  assert.ok(sc.ratings.communication.score < 100 && sc.ratings.communication.points_lost.some((p: any) => /2 terms/.test(p.what)), 'two terms beyond the level cost points');
+  assert.equal(typeof sc.overall, 'number');
   assert.match((await call('save_evaluation', { focus_skill: 'charm', reason: 'x' })).error, /must be one of/);
   assert.match((await call('save_evaluation', { focus_skill: 'accuracy', reason: 'x' })).error, /weakness this session showed/);
   const ok = await call('save_evaluation', { focus_skill: 'clear_language', reason: 'Used thylakoid and stroma without defining them.', evidence_ids: ['E1', 'E99'] });
@@ -118,7 +120,8 @@ test('too-short session: no ratings, nothing saved, current challenge kept', asy
   const r = await runFallbackCoach(createState({ session: sess, history: null, activeChallenge: null }, det), 'test');
   assert.equal(r.evaluation, null);
   assert.equal(r.challenge, null);
-  assert.ok(Object.values(r.ratings).every((x) => x.score === null));
+  assert.ok((['engagement', 'communication', 'teaching'] as const).every((c) => r.ratings[c].score === null));
+  assert.equal(r.ratings.overall, null);
   let p = applyCoachResult(emptyProfile(), r);
   assert.equal(p.currentChallengeId, null);
 });
@@ -188,7 +191,7 @@ test('agent path: the agent chooses tool order; results and log come from its ca
     await t.get('score_session').invoke({});
     await t.get('compare_with_previous').invoke({});
     await t.get('save_evaluation').invoke({ focus_skill: 'clear_language', reason: 'Two terms were never explained.', evidence_ids: ['E1'] });
-    await t.get('save_practice_challenge').invoke({ title: 'Plain words', goal: 'Define each new word.', student_profile: 'A curious 12-year-old who stops you at every unfamiliar word.', criteria_json: '[{"metric":"undefined_terms","target":0},{"metric":"rating_communication","target":4}]' });
+    await t.get('save_practice_challenge').invoke({ title: 'Plain words', goal: 'Define each new word.', student_profile: 'A curious 12-year-old who stops you at every unfamiliar word.', criteria_json: '[{"metric":"undefined_terms","target":0},{"metric":"rating_communication","target":80}]' });
     return { messages: [{ tool_calls: [{ name: 'write_todos', args: { todos: [{ content: 'score' }, { content: 'plan' }] } }, { name: 'score_session', args: {} }] }, { content: 'Saved.' }] };
   }, seen));
   const r = await runCoach({ session: sess, history: null, activeChallenge: null }, { apiKey: 'k', loadDeps: deps, ...det });

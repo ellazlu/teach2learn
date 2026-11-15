@@ -20,7 +20,8 @@ const scorable = (r: SessionRecord): ScorableSession => ({
 
 export function rateRecord(r: SessionRecord) {
   const s = scorable(r);
-  return { facts: factsFrom(s), scores: r.ratings || scoreSession(s) };
+  // Ratings saved before the 0-100 rubric are recomputed from the session's own data.
+  return { facts: factsFrom(s), scores: r.ratings && (r.ratings as any).scale === 100 ? r.ratings : scoreSession(s) };
 }
 
 export function addRecordToProfile(p: TutorProfile, r: SessionRecord): TutorProfile {

@@ -83,6 +83,7 @@ test('difficulty adapts to the last attempt', () => {
 const summary = (id: string, at: string, ratings: [number | null, number | null, number | null], weak: string[] = [], challengeId: string | null = null): SessionSummary => ({
   id, at, topic: 'Photosynthesis', levelId: 'middle', timeUsedSec: 120,
   ratings: { engagement: ratings[0], communication: ratings[1], teaching: ratings[2] },
+  scale: 100,
   explanations: { engagement: '', communication: '', teaching: '' },
   metrics: { wpm: null, fillersPerMin: null, maxRunSec: null, checkIns: 0, questionsAsked: 0, questionsAnswered: 0 },
   weaknesses: weak as any, focusSkill: null, challengeId,
@@ -182,4 +183,17 @@ test('evidence ids are removed from text the tutor reads', () => {
   assert.equal(plainReason("open questions about orbits (E3, E5) and the Solar System's members (E2)."), "open questions about orbits and the Solar System's members.");
   assert.equal(plainReason('Unclear (E1 and E4).'), 'Unclear.');
   assert.equal(plainReason('Nothing to strip (see Earth).'), 'Nothing to strip (see Earth).');
+});
+
+test('0-100 migration: old 1-5 summaries are dropped (re-added from records), old rating targets rescaled', () => {
+  const store = memStore();
+  store.setItem(PROGRESS_KEY, JSON.stringify({
+    version: 1,
+    sessions: [{ ...summary('old', '2026-10-01', [3, 4, 2]), scale: undefined }, summary('new', '2026-11-01', [60, 80, 70])],
+    challenges: [{ id: 'c', skill: 'accuracy', attempts: [], criteria: [{ metric: 'rating_teaching', op: '>=', target: 4 }, { metric: 'check_ins', op: '>=', target: 2 }] }],
+    currentChallengeId: 'c',
+  }));
+  const p = loadProfile(store);
+  assert.deepEqual(p.sessions.map((s) => s.id), ['new'], 'never mixes scales');
+  assert.deepEqual(p.challenges[0].criteria.map((c) => c.target), [80, 2]);
 });

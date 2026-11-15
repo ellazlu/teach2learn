@@ -1,80 +1,104 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scoreEngagement, scoreCommunication, scoreTeaching, scoreSession, factsFrom, weaknesses, type SessionFacts } from '../lib/coach/rubric.ts';
-import { initStudentModel, applyEvaluation, applyVerification } from '../lib/student/knowledge.ts';
+import {
+  scoreEngagement, scoreCommunication, scoreTeaching, scoreSession, scoresFromFacts, factsFrom, weaknesses, overallScore,
+  CRITERIA, CATEGORIES, OVERALL_WEIGHTS, type SessionFacts,
+} from '../lib/coach/rubric.ts';
+import { initStudentModel, applyEvaluation, applyVerification, learningSummary } from '../lib/student/knowledge.ts';
 import { recordQuestion } from '../lib/student/questions.ts';
 import { computeSpeechMetrics } from '../lib/student/speech.ts';
 import { buildEvidence } from '../lib/student/evidence.ts';
-import { learningSummary } from '../lib/student/knowledge.ts';
+import { isKnownTerm } from '../lib/levels.ts';
 import { EXTRACTION, seg, proposal, goodC1 } from './fixtures.ts';
 import type { Segment } from '../lib/student/types.ts';
 
-const base = (over: Partial<SessionFacts> = {}): SessionFacts => ({
+export const base = (over: Partial<SessionFacts> = {}): SessionFacts => ({
   levelId: 'middle', teacherWords: 200, teacherSpeakingSec: 90, studentTurns: 2, invitations: 0, studentQuestions: 0,
-  answered: 0, partlyAnswered: 0, longRuns: 0, undefinedTerms: 0, unclear: 0, incorrect: 0, conceptsMentioned: 2,
-  conceptsExplained: 1, demonstrated: 0, demoAttempts: 0, misconceptionsResolved: 0, misconceptionsLeftStanding: 0,
+  answered: 0, partlyAnswered: 0, longRuns: 0, undefinedTerms: 0, unclear: 0, incorrect: 0, accurate: 1, shallow: 0, reinforced: 0,
+  conceptsTotal: 3, conceptsMentioned: 2, conceptsExplained: 1, orderedExplained: 0, orderable: 0, demonstrated: 0, partlyDemonstrated: 0,
+  demoAttempts: 0, misconceptionsResolved: 0, misconceptionsVoiced: 0, misconceptionsLeftStanding: 0,
   examples: 0, wpm: null, fillersPerMin: null, maxRunSec: null, ...over,
 });
 
-test('too little speech -> "Not enough evidence" for every category', () => {
-  const f = base({ teacherWords: 25 });
-  for (const r of [scoreEngagement(f, []), scoreCommunication(f, []), scoreTeaching(f, [])]) {
-    assert.equal(r.score, null);
-    assert.match(r.explanation, /^Not enough evidence/);
+test('rubric: weights sum to 100 in every category; overall weights sum to 1', () => {
+  for (const c of CATEGORIES) assert.equal(CRITERIA.filter((x) => x.category === c).reduce((n, x) => n + x.weight, 0), 100, c);
+  assert.equal(Object.values(OVERALL_WEIGHTS).reduce((a, b) => a + b, 0), 1);
+});
+
+test('too little speech -> "Not enough evidence" for every category and overall', () => {
+  const s = scoresFromFacts(base({ teacherWords: 25 }), []);
+  for (const c of CATEGORIES) {
+    assert.equal(s[c].score, null);
+    assert.match(s[c].explanation, /^Not enough evidence/);
   }
+  assert.equal(s.overall, null);
 });
 
-test('teaching needs the topic to come up before it is rated', () => {
-  const r = scoreTeaching(base({ conceptsMentioned: 0, conceptsExplained: 0 }), []);
-  assert.equal(r.score, null);
+test('scores are deterministic, 0-100, and meaningfully spread', () => {
+  const strong = base({ invitations: 2, studentQuestions: 4, answered: 4, maxRunSec: 40, accurate: 3, conceptsExplained: 3, demonstrated: 2, orderable: 2, orderedExplained: 2, misconceptionsVoiced: 1, misconceptionsResolved: 1, wpm: 140, fillersPerMin: 2 });
+  const weak = base({ invitations: 0, studentTurns: 0, studentQuestions: 4, answered: 0, longRuns: 1, maxRunSec: 120, accurate: 0, shallow: 2, incorrect: 2, unclear: 2, undefinedTerms: 3, conceptsExplained: 1, misconceptionsVoiced: 1, misconceptionsLeftStanding: 1, wpm: 240, fillersPerMin: 10 });
+  const a = scoresFromFacts(strong, []);
+  const b = scoresFromFacts(weak, []);
+  assert.deepEqual(scoresFromFacts(strong, []), a, 'same input, same scores');
+  for (const c of CATEGORIES) {
+    assert.ok(a[c].score! >= 90, `${c} strong=${a[c].score}`);
+    assert.ok(b[c].score! <= 40, `${c} weak=${b[c].score}`);
+    assert.ok(a[c].score! <= 100 && b[c].score! >= 0);
+  }
+  assert.equal(a.engagement.score, 100);
+  assert.ok(a.overall! - b.overall! >= 60, `overall spread ${a.overall} vs ${b.overall}`);
 });
 
-test('scores are deterministic and clamp to 1..5', () => {
-  const f = base({ invitations: 2, studentQuestions: 4, answered: 4 });
-  assert.deepEqual(scoreEngagement(f, []), scoreEngagement(f, []));
-  assert.equal(scoreEngagement(f, []).score, 5);
-  const bad = base({ invitations: 0, studentTurns: 0, studentQuestions: 4, answered: 0, longRuns: 1 });
-  assert.equal(scoreEngagement(bad, []).score, 1);
-  const worst = base({ undefinedTerms: 5, unclear: 4, fillersPerMin: 12, wpm: 240 });
-  assert.equal(scoreCommunication(worst, []).score, 1);
+test('overall = weighted combination of the rated categories', () => {
+  assert.equal(overallScore({ engagement: { score: 50 }, communication: { score: 80 }, teaching: { score: 90 } }), Math.round(0.3 * 50 + 0.3 * 80 + 0.4 * 90));
+  assert.equal(overallScore({ engagement: { score: 60 }, communication: { score: null }, teaching: { score: 80 } }), Math.round((0.3 * 60 + 0.4 * 80) / 0.7), 'renormalized over rated categories');
 });
 
-test('more check-ins or more talking is not rewarded beyond the first', () => {
-  const one = scoreEngagement(base({ invitations: 1 }), []).score;
-  const ten = scoreEngagement(base({ invitations: 10 }), []).score;
-  assert.equal(one, ten);
-  const short = scoreCommunication(base({ teacherWords: 150 }), []).score;
-  const long = scoreCommunication(base({ teacherWords: 900 }), []).score;
-  assert.equal(short, long);
+test('more check-ins or more talking is not rewarded beyond what a criterion needs', () => {
+  assert.equal(scoreEngagement(base({ invitations: 2 }), []).score, scoreEngagement(base({ invitations: 10 }), []).score);
+  assert.equal(scoreCommunication(base({ teacherWords: 150 }), []).score, scoreCommunication(base({ teacherWords: 900 }), []).score);
+  assert.equal(scoreTeaching(base({ teacherWords: 150 }), []).score, scoreTeaching(base({ teacherWords: 900 }), []).score, 'concise explanations score the same as long ones');
 });
 
 test('pace and fillers only count when measured; pauses never count', () => {
-  const unmeasured = scoreCommunication(base({ wpm: null, fillersPerMin: null }), []);
-  const measuredFine = scoreCommunication(base({ wpm: 140, fillersPerMin: 3 }), []);
-  assert.equal(unmeasured.score, measuredFine.score);
-  assert.equal(scoreCommunication(base({ wpm: 230 }), []).score, unmeasured.score! - 1);
-  // SessionFacts has no pause input at all: long pauses can't lower a score.
-  assert.ok(!('longPauses' in base()));
+  const unmeasured = scoreCommunication(base(), []);
+  const fine = scoreCommunication(base({ wpm: 140, fillersPerMin: 3 }), []);
+  const fast = scoreCommunication(base({ wpm: 240, fillersPerMin: 3 }), []);
+  assert.equal(unmeasured.criteria.find((c) => c.id === 'C4')!.value, null);
+  assert.equal(unmeasured.score, 100);
+  assert.equal(fine.score, 100);
+  assert.ok(fast.score! < fine.score!);
+  assert.ok(!('longPauses' in base()), 'no pause input exists');
 });
 
-test('explaining is not learning: teaching is capped at 4 without a demonstration', () => {
-  const noDemo = scoreTeaching(base({ conceptsExplained: 3, misconceptionsResolved: 1, examples: 2 }), []);
-  assert.equal(noDemo.score, 4);
-  assert.match(noDemo.explanation, /Capped/);
-  const demo = scoreTeaching(base({ conceptsExplained: 3, misconceptionsResolved: 1, examples: 2, demonstrated: 1 }), []);
-  assert.equal(demo.score, 5);
+test('unexplained basic terms barely matter; factual errors and shallow explanations cost more', () => {
+  const clean = scoresFromFacts(base({ accurate: 2, conceptsExplained: 2 }), []);
+  const oneTerm = scoresFromFacts(base({ accurate: 2, conceptsExplained: 2, undefinedTerms: 1 }), []);
+  const oneError = scoresFromFacts(base({ accurate: 2, conceptsExplained: 2, incorrect: 1 }), []);
+  const shallow = scoresFromFacts(base({ accurate: 1, shallow: 1, conceptsExplained: 2 }), []);
+  const lostTerm = clean.overall! - oneTerm.overall!;
+  const lostError = clean.overall! - oneError.overall!;
+  const lostShallow = clean.overall! - shallow.overall!;
+  assert.ok(lostTerm <= 3, `one unexplained term costs ${lostTerm}`);
+  assert.ok(lostError > 2 * lostTerm, `an error (${lostError}) costs more than a term (${lostTerm})`);
+  assert.ok(lostShallow > lostTerm, `a shallow explanation (${lostShallow}) costs more than a term (${lostTerm})`);
+  // Code never flags age-appropriate vocabulary, whatever the model says.
+  assert.ok(isKnownTerm('photosynthesis', 'high') && isKnownTerm('ATP', 'college') && !isKnownTerm('thylakoid', 'college'));
 });
 
-test('explanation names the deciding factor and weaknesses map to skills', () => {
-  const s = {
-    engagement: scoreEngagement(base({ longRuns: 1 }), []),
-    communication: scoreCommunication(base({ undefinedTerms: 2 }), []),
-    teaching: scoreTeaching(base({ incorrect: 1 }), []),
-  };
-  assert.match(s.communication.explanation, /2 terms without explaining them/);
+test('explaining is not learning: teaching needs the student to show it', () => {
+  const noDemo = scoreTeaching(base({ accurate: 3, conceptsExplained: 3 }), []);
+  const demo = scoreTeaching(base({ accurate: 3, conceptsExplained: 3, demonstrated: 1 }), []);
+  assert.ok(demo.score! - noDemo.score! >= 15, `${noDemo.score} -> ${demo.score}`);
+  assert.match(noDemo.explanation, /never showed it understood/);
+});
+
+test('explanation names the costliest criterion; weaknesses map to skills', () => {
+  const s = scoresFromFacts(base({ longRuns: 1, maxRunSec: 120, undefinedTerms: 2, incorrect: 2 }), []);
+  assert.match(s.teaching.explanation, /didn't match the material/);
   const w = weaknesses(s).map((x) => x.skill);
-  assert.equal(w[0], 'clear_language', 'the -2 factor is the most severe');
-  assert.ok(w.includes('accuracy') && w.includes('student_participation'));
+  assert.equal(w[0], 'accuracy', 'two factual errors are the biggest loss');
+  assert.ok(w.includes('student_participation') && w.includes('building_understanding'));
 });
 
 test('factsFrom reads a real session: model, events, metrics and evidence', () => {
@@ -86,7 +110,7 @@ test('factsFrom reads a real session: model, events, metrics and evidence', () =
   events.push(...r.events);
   r = applyEvaluation(r.model, seg('inside the thylakoid photolysis happens', 40), proposal({ undefined_terms: [{ term: 'thylakoid', quote: 'inside the thylakoid' }] }));
   events.push(...r.events);
-  m = recordQuestion(r.model, { kind: 'question', type: 'clarify', conceptId: 'c1', misconceptionId: null, followsQuestionId: null, reason: '', score: 1 }, 'Where does the food go?', 50);
+  m = recordQuestion(r.model, { kind: 'question', type: 'clarify', conceptId: 'c1', misconceptionId: null, followsQuestionId: null, focus: null, reason: '', score: 1 }, 'Where does the food go?', 50);
   const v = applyVerification(m, 'c1', { at: 60, mode: 'explain_back', text: 'they make sugar from light', verdict: 'demonstrated', note: 'ok' });
   m = v.model;
   events.push(...v.events);
@@ -99,20 +123,23 @@ test('factsFrom reads a real session: model, events, metrics and evidence', () =
   const evidence = buildEvidence({ initial, final: m, events, metrics, learning: learningSummary(initial, m) });
   const f = factsFrom({ levelId: 'middle', utterances, events, metrics, evidence, finalModel: m });
   assert.equal(f.undefinedTerms, 1);
+  assert.equal(f.accurate, 1);
   assert.equal(f.demonstrated, 1);
   assert.equal(f.conceptsExplained, 1);
+  assert.equal(f.conceptsTotal, 3);
   assert.equal(f.studentQuestions, 1);
   assert.ok(f.invitations >= 1);
   assert.equal(f.fillersPerMin, 0, '35s of timed speech, no fillers');
-  assert.equal(factsFrom({ levelId: 'middle', utterances: utterances.slice(0, 1), events, metrics: computeSpeechMetrics(utterances.slice(0, 1)), evidence, finalModel: m }).fillersPerMin, null, 'under 30s of speech -> fillers not rated');
   const s = scoreSession({ levelId: 'middle', utterances, events, metrics, evidence, finalModel: m });
-  assert.equal(s.communication.score, 3, '4 - 1 undefined term');
-  assert.ok(s.communication.evidenceIds.length >= 1, 'explanation is backed by evidence ids');
-  assert.equal(s.teaching.score, 5, '3 + demonstrated + example; cap lifted by the demonstration');
+  assert.equal(s.scale, 100);
+  assert.equal(s.communication.criteria.find((c) => c.id === 'C2')!.value, 0.8, 'one term beyond a middle schooler');
+  assert.ok(s.communication.evidenceIds.length >= 1, 'backed by evidence ids');
+  assert.ok(s.overall !== null && s.overall > 0 && s.overall <= 100);
 });
 
 test('missing data never throws', () => {
   const s = scoreSession({ levelId: 'high', utterances: [], events: [], metrics: null, evidence: [], finalModel: null });
   assert.equal(s.engagement.score, null);
   assert.equal(s.teaching.score, null);
+  assert.equal(s.overall, null);
 });

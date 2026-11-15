@@ -37,7 +37,7 @@ export default function ProgressScreen({ profile, onStartChallenge, onOpenSessio
         <>
           <section className="panel">
             <div className="panel-head">
-              <h2 className="label">Ratings over time</h2>
+              <h2 className="label">Scores over time</h2>
               <span className="muted small">{rated.length} rated session{rated.length === 1 ? '' : 's'} since {shortDate(sessions[0].at)}</span>
             </div>
             {rated.length === 0 ? (
@@ -98,7 +98,7 @@ export default function ProgressScreen({ profile, onStartChallenge, onOpenSessio
             <div className="table-wrap">
               <table className="data">
                 <thead>
-                  <tr><th>Date</th><th>Topic</th><th>Level</th>{CATEGORIES.map((c) => <th key={c} className="num">{SHORT[c]}</th>)}<th>Coach focus</th></tr>
+                  <tr><th>Date</th><th>Topic</th><th>Level</th><th className="num">Overall</th>{CATEGORIES.map((c) => <th key={c} className="num">{SHORT[c]}</th>)}<th>Coach focus</th></tr>
                 </thead>
                 <tbody>
                   {[...sessions].reverse().slice(0, 10).map((s) => (
@@ -106,6 +106,7 @@ export default function ProgressScreen({ profile, onStartChallenge, onOpenSessio
                       <td>{shortDate(s.at)}</td>
                       <td>{s.topic}{s.challengeId && <span className="tag">challenge</span>}</td>
                       <td>{getLevel(s.levelId).label}</td>
+                      <td className="num"><strong>{s.ratings.overall ?? <span className="muted" title="Not enough evidence">–</span>}</strong></td>
                       {CATEGORIES.map((c) => <td key={c} className="num">{s.ratings[c] ?? <span className="muted" title="Not enough evidence">–</span>}</td>)}
                       <td className="muted">{s.focusSkill ? SKILLS[s.focusSkill].label : '–'}</td>
                     </tr>
@@ -181,17 +182,17 @@ function CoachLog({ log }) {
 
 // ---- Line chart: three categories, 1-5, one point per session -------------------------------
 
-const W = 680, H = 230, M = { l: 30, r: 112, t: 14, b: 30 };
+const W = 680, H = 230, M = { l: 30, r: 170, t: 14, b: 30 };
 
 export function RatingsChart({ series }) {
   const [hover, setHover] = useState(null);
   const [asTable, setAsTable] = useState(false);
   const n = series[0].points.length;
   const x = (i) => M.l + (n <= 1 ? (W - M.l - M.r) / 2 : (i * (W - M.l - M.r)) / (n - 1));
-  const y = (v) => M.t + ((5 - v) * (H - M.t - M.b)) / 4;
+  const y = (v) => M.t + ((100 - v) * (H - M.t - M.b)) / 100;
   // Ratings are whole numbers, so equal values would hide each other: give
   // each series a small fixed vertical offset.
-  const OFF = { engagement: -3, communication: 0, teaching: 3 };
+  const OFF = { engagement: -2, communication: 0, teaching: 2 };
   // Break the line at missing ratings rather than bridging them.
   const segments = (pts, off) => {
     const out = [];
@@ -251,8 +252,8 @@ export function RatingsChart({ series }) {
         </div>
       ) : (
         <div className="chart-plot">
-          <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Ratings from 1 to 5 for each session" onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
-            {[1, 2, 3, 4, 5].map((v) => (
+          <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Scores from 0 to 100 for each session" onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+            {[0, 25, 50, 75, 100].map((v) => (
               <g key={v}>
                 <line x1={M.l} x2={W - M.r} y1={y(v)} y2={y(v)} className="grid" />
                 <text x={M.l - 10} y={y(v) + 4} className="axis" textAnchor="end">{v}</text>

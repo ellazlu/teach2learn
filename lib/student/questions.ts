@@ -51,7 +51,7 @@ function conceptQuestionType(reason: 'unexplained' | 'weak' | 'low', c: ConceptS
   const explainedPrereq = c.prerequisites.some((p) => model.concepts.find((x) => x.id === p)?.explained);
   if (reason === 'unexplained') {
     if (level.id === 'expert') return 'challenge';
-    return level.id === 'college' ? 'clarify' : 'define_term';
+    return BEGINNER.has(level.id) ? 'define_term' : 'clarify';
   }
   if (reason === 'weak') {
     if (BEGINNER.has(level.id)) return 'example';

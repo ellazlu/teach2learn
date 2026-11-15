@@ -127,15 +127,19 @@ try {
   assert.equal(await page.$$eval('.three-item', (n) => n.length), 3);
   const ratings = await page.$$eval('.rating', (els) => els.map((e) => ({ label: e.querySelector('.rating-label').textContent, score: e.querySelector('.rating-score')?.textContent || e.querySelector('.rating-na')?.textContent, why: e.querySelector('.rating-why').textContent })));
   assert.deepEqual(ratings.map((r) => r.label), ['Engagement', 'Communication', 'Teaching effectiveness']);
-  assert.ok(ratings.every((r) => /^[1-5]\/5$/.test(r.score) || r.score === 'Not enough evidence') && ratings.every((r) => r.why.length > 10), JSON.stringify(ratings));
-  assert.equal(ratings[2].score, '5/5', 'misconception resolved + demonstrated + example');
-  assert.equal(ratings[1].score, '3/5', 'one undefined term (thylakoid)');
-  step(`three 1-5 ratings with explanations: ${ratings.map((r) => r.score).join(', ')}`);
+  assert.ok(ratings.every((r) => /^\d{1,3}\/100$/.test(r.score) || r.score === 'Not enough evidence') && ratings.every((r) => r.why.length > 10), JSON.stringify(ratings));
+  const num = (x) => Number(x.split('/')[0]);
+  assert.ok(num(ratings[2].score) >= 70, `teaching: misconception resolved + demonstrated (${ratings[2].score})`);
+  assert.ok(num(ratings[1].score) < 100, `communication: one term beyond a middle schooler (thylakoid) costs a little (${ratings[1].score})`);
+  const overall = await page.textContent('.overall-score');
+  assert.match(overall, /^\d{1,3}\/100$/);
+  step(`0-100 scores with explanations: ${ratings.map((r) => r.score).join(', ')}; overall ${overall}`);
   await page.click('.evidence-details summary');
   assert.equal(await page.textContent('.stats .stat:nth-child(4) .stat-v'), '1', 'the check-in was counted');
   assert.equal(await page.$$eval('.rubric-item', (n) => n.length), 3);
+  assert.ok((await page.$$('.criteria-table tr')).length >= 12, 'every weighted criterion is shown with its points');
   assert.ok((await page.$$('.evidence-list li')).length >= 3);
-  step('expandable evidence section: evidence list, speech stats, rubric with the factors that moved each rating');
+  step('expandable evidence section: evidence list, speech stats, weighted criteria with points per category');
   const q = await page.$eval('.evidence q', (el) => getComputedStyle(el, '::before').content);
   assert.equal(q, 'open-quote');
   step('feedback: exactly three teaching items + concept summary with the three verification labels');
@@ -175,7 +179,10 @@ try {
   // 5c) Progress dashboard.
   await page.click('.topnav button:has-text("Progress")');
   await page.waitForSelector('.progress .chart-plot svg');
-  assert.equal(await page.$$eval('.chart-plot polyline', (n) => n.length), 3, 'one line per category');
+  const rows = await page.evaluate(() => JSON.parse(localStorage.getItem('teach2learn-tutor-v1')).sessions.map((x) => x.ratings));
+  const expectLines = ['engagement', 'communication', 'teaching'].filter((c) => rows.every((r) => r[c] !== null)).length;
+  assert.equal(await page.$$eval('.chart-plot polyline', (n) => n.length), expectLines, 'a line per category rated in both sessions (unrated = gap)');
+  assert.ok(rows.every((r) => r.overall === null || (r.overall >= 0 && r.overall <= 100)));
   assert.equal(await page.$$eval('.legend li', (n) => n.length), 3);
   assert.equal(await page.$$eval('.end-label', (n) => n.length), 3, 'direct labels');
   const box = await page.$eval('.chart-plot svg', (e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });

@@ -194,6 +194,8 @@ export type KnowledgeEvent =
   | { type: 'question_status'; segmentId: string; at: number; questionId: string; status: QuestionStatus; quote: string }
   | { type: 'checked_understanding'; segmentId: string; at: number; quote: string }
   | { type: 'used_example'; segmentId: string; at: number; conceptId: string; quote: string }
+  | { type: 'accurate_explanation'; segmentId: string; at: number; conceptId: string; quote: string }
+  | { type: 'shallow_explanation'; segmentId: string; at: number; conceptId: string; quote: string; gap: string }
   | { type: 'rejected_proposal'; segmentId: string; at: number; detail: string }
   | { type: 'demonstration'; segmentId: string; at: number; conceptId: string; mode: Demonstration['mode']; verdict: Demonstration['verdict']; text: string; note: string; status: Verification };
 

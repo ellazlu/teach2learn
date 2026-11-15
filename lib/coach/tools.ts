@@ -314,12 +314,13 @@ export function createTools(s: CoachState, clock: () => number = Date.now): Coac
         };
       }),
     wrap('score_session',
-      'Apply the fixed rubric. Returns the 1-5 rating (or null = not enough evidence) for engagement, communication and teaching effectiveness, each with its explanation and the factors that moved it, plus the weak skills this session showed. Ratings are deterministic; do not re-score them yourself.',
+      'Apply the fixed rubric. Returns the 0-100 score (or null = not enough evidence) for engagement, communication and teaching effectiveness plus the weighted overall score, each with its explanation and the criteria that cost points, plus the weak skills this session showed. Ratings are deterministic; do not re-score them yourself.',
       {},
       () => {
         const sc = ensureScores(s);
         return {
-          ratings: Object.fromEntries(CATEGORIES.map((c) => [c, { label: CATEGORY_LABEL[c], score: sc[c].score, explanation: sc[c].explanation, factors: sc[c].factors.map((f) => ({ change: f.delta, what: f.text, skill: f.skill, evidence: f.evidenceIds })) }])),
+          overall: sc.overall,
+          ratings: Object.fromEntries(CATEGORIES.map((c) => [c, { label: CATEGORY_LABEL[c], score: sc[c].score, explanation: sc[c].explanation, points_lost: sc[c].factors.map((f) => ({ points: f.delta, what: f.text, skill: f.skill, evidence: f.evidenceIds })) }])),
           weak_skills: weaknesses(sc).map((w) => ({ skill: w.skill, label: SKILLS[w.skill].label, severity: w.severity })),
           all_not_enough_evidence: allUnrated(s),
         };

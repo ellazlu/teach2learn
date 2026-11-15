@@ -257,6 +257,17 @@ details summary { cursor: pointer; font-weight: 550; color: var(--ink-2); list-s
 .footer-actions { display: flex; justify-content: flex-end; align-items: center; gap: 12px; padding-top: 16px; border-top: 1px solid var(--line); }
 
 /* Ratings: three compact cards with a 5-step meter. */
+.scores { display: grid; grid-template-columns: 180px 1fr; gap: 16px; align-items: stretch; }
+.overall { border: 1px solid var(--ink); border-radius: var(--r); padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; justify-content: center; }
+.overall-score { font: 700 40px/1 var(--font); font-variant-numeric: tabular-nums; }
+.overall-score .of, .rating-score .of { font-size: 13px; font-weight: 500; color: var(--faint); margin-left: 2px; }
+.bar { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.bar span { display: block; height: 100%; background: var(--accent); border-radius: 2px; }
+.criteria-table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 13px; }
+.criteria-table td { padding: 5px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.criteria-table td.num { text-align: right; white-space: nowrap; padding-left: 8px; font-variant-numeric: tabular-nums; font-weight: 600; }
+.criteria-table tr.na .crit-label { color: var(--muted); }
+.crit-label { font-weight: 600; }
 .ratings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .rating { border: 1px solid var(--line); border-radius: var(--r); padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
 .rating-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
@@ -434,6 +445,7 @@ table.data tr.clickable:hover td { background: var(--surface); }
   .main { padding: 20px 16px 48px; }
   .session-grid, .results-grid, .progress-grid, .rubric { grid-template-columns: 1fr; gap: 24px; }
   .ratings { grid-template-columns: 1fr; gap: 10px; }
+  .scores { grid-template-columns: 1fr; }
   .mode-pick { grid-template-columns: 1fr; }
   .checklist-live:not([open]) .concept-list { display: none; }
   .board-list li { grid-template-columns: 1fr; }

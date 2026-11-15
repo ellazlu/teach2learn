@@ -14,6 +14,9 @@ export type Metric =
   | 'incorrect_explanations'
   | 'misconceptions_resolved'
   | 'concepts_demonstrated'
+  | 'shallow_explanations'
+  | 'concepts_explained'
+  | 'rating_overall'
   | 'rating_engagement'
   | 'rating_communication'
   | 'rating_teaching';
@@ -27,9 +30,12 @@ export const METRICS: Record<Metric, { label: string; unit: string }> = {
   incorrect_explanations: { label: "Explanations that didn't match the material", unit: '' },
   misconceptions_resolved: { label: 'Misconceptions resolved', unit: '' },
   concepts_demonstrated: { label: 'Concepts the student showed it understood', unit: '' },
-  rating_engagement: { label: 'Engagement rating', unit: '/5' },
-  rating_communication: { label: 'Communication rating', unit: '/5' },
-  rating_teaching: { label: 'Teaching effectiveness rating', unit: '/5' },
+  shallow_explanations: { label: 'Explanations missing the why or an essential part', unit: '' },
+  concepts_explained: { label: 'Key concepts explained', unit: '' },
+  rating_overall: { label: 'Overall score', unit: '/100' },
+  rating_engagement: { label: 'Engagement score', unit: '/100' },
+  rating_communication: { label: 'Communication score', unit: '/100' },
+  rating_teaching: { label: 'Teaching effectiveness score', unit: '/100' },
 };
 export const METRIC_IDS = Object.keys(METRICS) as Metric[];
 
@@ -95,6 +101,9 @@ export function measure(metric: Metric, f: SessionFacts, scores: Scores): number
       // Only judgeable if a misconception was actually in play.
       return f.misconceptionsResolved + f.misconceptionsLeftStanding > 0 ? f.misconceptionsResolved : null;
     case 'concepts_demonstrated': return f.conceptsExplained > 0 || f.demoAttempts > 0 ? f.demonstrated : null;
+    case 'shallow_explanations': return f.accurate + f.shallow > 0 ? f.shallow : null;
+    case 'concepts_explained': return f.conceptsExplained;
+    case 'rating_overall': return scores.overall ?? null;
     default: {
       const cat = metric.replace('rating_', '') as Category;
       return scores[cat]?.score ?? null;
@@ -123,7 +132,7 @@ export function makeAttempt(sessionId: string, at: string, results: CriterionRes
 
 export function describeCriterion(c: Criterion): string {
   const m = METRICS[c.metric];
-  const target = c.metric === 'questions_answered_ratio' ? `${c.target}%` : `${c.target}${m.unit === '/5' ? '/5' : m.unit}`;
+  const target = c.metric === 'questions_answered_ratio' ? `${c.target}%` : `${c.target}${m.unit}`;
   if (c.metric === 'max_run_seconds') return `Never talk more than ${target} without checking in`;
   if (c.op === '<=' && c.target === 0) return `${m.label}: none`;
   return `${m.label}: ${c.op === '>=' ? 'at least' : 'at most'} ${target}`;
@@ -141,15 +150,19 @@ const RANGE: Record<Metric, [number, number]> = {
   incorrect_explanations: [0, 2],
   misconceptions_resolved: [1, 3],
   concepts_demonstrated: [1, 3],
-  rating_engagement: [2, 5],
-  rating_communication: [2, 5],
-  rating_teaching: [2, 5],
+  shallow_explanations: [0, 2],
+  concepts_explained: [1, 5],
+  rating_overall: [40, 100],
+  rating_engagement: [40, 100],
+  rating_communication: [40, 100],
+  rating_teaching: [40, 100],
 };
 // The direction that means "better" for each metric.
 const BETTER: Record<Metric, '>=' | '<='> = {
   check_ins: '>=', questions_answered_ratio: '>=', max_run_seconds: '<=', undefined_terms: '<=', unclear_explanations: '<=',
   incorrect_explanations: '<=', misconceptions_resolved: '>=', concepts_demonstrated: '>=',
-  rating_engagement: '>=', rating_communication: '>=', rating_teaching: '>=',
+  shallow_explanations: '<=', concepts_explained: '>=',
+  rating_overall: '>=', rating_engagement: '>=', rating_communication: '>=', rating_teaching: '>=',
 };
 
 export interface ChallengeDraft {
@@ -247,25 +260,37 @@ export const TEMPLATES: Record<Skill, Template> = {
     title: 'No jargon',
     goal: 'Explain every technical word the first time you use it.',
     profile: 'This student is new to the subject and does not know its vocabulary. It asks what words mean when they are not explained.',
-    criteria: (d) => [{ metric: 'undefined_terms', target: d >= 2 ? 0 : 1 }, { metric: 'rating_communication', target: d + 2 }],
+    criteria: (d) => [{ metric: 'undefined_terms', target: d >= 2 ? 0 : 1 }, { metric: 'rating_communication', target: [65, 75, 85][d - 1] }],
   },
   clarity_and_pacing: {
     title: 'One step at a time',
     goal: 'Explain one idea at a time, in short, concrete steps.',
     profile: 'This student gets overwhelmed when several ideas come at once. It follows well when ideas come one by one with an example.',
-    criteria: (d) => [{ metric: 'unclear_explanations', target: d >= 2 ? 0 : 1 }, { metric: 'rating_communication', target: d + 2 }],
+    criteria: (d) => [{ metric: 'unclear_explanations', target: d >= 2 ? 0 : 1 }, { metric: 'rating_communication', target: [65, 75, 85][d - 1] }],
   },
   accuracy: {
     title: 'Get it exactly right',
     goal: 'Keep every explanation accurate to the material.',
     profile: 'This student is sharp and repeats back exactly what it is told, so any inaccuracy becomes its belief.',
-    criteria: (d) => [{ metric: 'incorrect_explanations', target: 0 }, { metric: 'rating_teaching', target: d + 1 }],
+    criteria: (d) => [{ metric: 'incorrect_explanations', target: 0 }, { metric: 'rating_teaching', target: [55, 65, 75][d - 1] }],
+  },
+  explaining_reasoning: {
+    title: 'But why?',
+    goal: 'For each idea, say why it works that way, not just what happens.',
+    profile: 'This student always wants the reason. It is not satisfied by "that\'s just how it is" and asks "but why?" until it hears the mechanism.',
+    criteria: (d) => [{ metric: 'shallow_explanations', target: d >= 2 ? 0 : 1 }, ...(d >= 2 ? [{ metric: 'rating_teaching' as Metric, target: [55, 65, 75][d - 1] }] : [])],
+  },
+  covering_key_ideas: {
+    title: 'Hit the essentials',
+    goal: 'Explain each key idea briefly before going deep on any one of them.',
+    profile: 'This student is preparing for a test tomorrow and needs the big picture: it gets anxious if one detail takes the whole session.',
+    criteria: (d) => [{ metric: 'concepts_explained', target: Math.min(3, d + 1) }],
   },
   addressing_misconceptions: {
     title: 'The confident misconception',
     goal: "Find the student's wrong idea and correct it so it sticks.",
     profile: 'This student holds a common misconception confidently and will bring it up. It only lets go of it if the tutor explains why it is wrong, not just what is right.',
-    criteria: (d) => [{ metric: 'misconceptions_resolved', target: 1 }, ...(d >= 2 ? [{ metric: 'rating_teaching' as Metric, target: d + 1 }] : [])],
+    criteria: (d) => [{ metric: 'misconceptions_resolved', target: 1 }, ...(d >= 2 ? [{ metric: 'rating_teaching' as Metric, target: [55, 65, 75][d - 1] }] : [])],
   },
   building_understanding: {
     title: 'Prove they got it',

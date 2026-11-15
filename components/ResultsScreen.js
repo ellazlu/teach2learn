@@ -4,7 +4,7 @@ import { formatTime } from '../lib/client';
 import { getLevel } from '../lib/levels.ts';
 import { fmt } from '../lib/student/speech.ts';
 import { Turn } from './SessionScreen';
-import { CATEGORIES, CATEGORY_LABEL, RUBRIC_TEXT } from '../lib/coach/rubric.ts';
+import { CATEGORIES, CATEGORY_LABEL, OVERALL_WEIGHTS } from '../lib/coach/rubric.ts';
 import { describeCriterion, plainReason } from '../lib/coach/challenges.ts';
 import { rateRecord } from '../lib/coach/record.ts';
 
@@ -35,10 +35,17 @@ export default function ResultsScreen({ entry, attemptNumber, isHistory, footer,
         <h1>{entry.topicTitle}</h1>
       </header>
 
-      <section className="ratings" aria-label="Ratings">
-        {CATEGORIES.map((c) => (
-          <Rating key={c} label={CATEGORY_LABEL[c]} rating={ratings[c]} />
-        ))}
+      <section className="scores" aria-label="Scores">
+        <div className="overall">
+          <span className="rating-label">Overall</span>
+          {ratings.overall === null ? <span className="rating-na">Not enough evidence</span> : <span className="overall-score">{ratings.overall}<span className="of">/100</span></span>}
+          <span className="fine">{CATEGORIES.map((c) => `${CATEGORY_LABEL[c].split(' ')[0]} ${Math.round(OVERALL_WEIGHTS[c] * 100)}%`).join(' · ')}</span>
+        </div>
+        <div className="ratings">
+          {CATEGORIES.map((c) => (
+            <Rating key={c} label={CATEGORY_LABEL[c]} rating={ratings[c]} />
+          ))}
+        </div>
       </section>
 
       <div className="results-grid">
@@ -124,17 +131,22 @@ export default function ResultsScreen({ entry, attemptNumber, isHistory, footer,
             {CATEGORIES.map((c) => (
               <div key={c} className="rubric-item">
                 <h3>{CATEGORY_LABEL[c]}</h3>
-                <p className="small muted">{RUBRIC_TEXT[c]}</p>
-                {ratings[c].factors.length > 0 && (
-                  <ul className="factors">
-                    {ratings[c].factors.filter((f) => f.delta !== 0).map((f, i) => (
-                      <li key={i}><span className="delta">{f.delta > 0 ? `+${f.delta}` : `−${-f.delta}`}</span> {f.text}</li>
+                <table className="criteria-table">
+                  <tbody>
+                    {(ratings[c].criteria || []).map((k) => (
+                      <tr key={k.id} className={k.value === null ? 'na' : ''}>
+                        <td>
+                          <span className="crit-label">{k.label}</span>
+                          <span className="small muted"> {k.detail}</span>
+                        </td>
+                        <td className="num">{k.value === null ? <span className="muted" title="Not judged in this session; its weight is spread over the others">n/a</span> : `${Math.round(k.value * k.weight)}/${k.weight}`}</td>
+                      </tr>
                     ))}
-                  </ul>
-                )}
+                  </tbody>
+                </table>
               </div>
             ))}
-            <p className="fine">Ratings use fixed rules on what happened in the session, so they're comparable across sessions. Pauses, accent and speaking style never lower a score; pace and fillers count only when measured.</p>
+            <p className="fine">Scores use fixed, weighted criteria measured from the session, so they're comparable across sessions. Criteria that couldn't be judged (n/a) have their weight spread over the rest. Pauses, accent and speaking style never lower a score; pace and fillers count only when measured; basic, age-appropriate words never count as jargon.</p>
           </div>
         </div>
       </details>
@@ -157,10 +169,10 @@ function Rating({ label, rating }) {
     <div className="rating">
       <div className="rating-top">
         <span className="rating-label">{label}</span>
-        {s === null ? <span className="rating-na">Not enough evidence</span> : <span className="rating-score">{s}<span className="of">/5</span></span>}
+        {s === null ? <span className="rating-na">Not enough evidence</span> : <span className="rating-score">{s}<span className="of">/100</span></span>}
       </div>
-      <div className="meter" role="img" aria-label={s === null ? 'not rated' : `${s} out of 5`}>
-        {[1, 2, 3, 4, 5].map((i) => <span key={i} className={s !== null && i <= s ? 'on' : ''} />)}
+      <div className="bar" role="img" aria-label={s === null ? 'not rated' : `${s} out of 100`}>
+        <span style={{ width: `${s ?? 0}%` }} />
       </div>
       <p className="rating-why">{s === null ? rating.explanation.replace(/^Not enough evidence: /, '').replace(/^./, (c) => c.toUpperCase()) : rating.explanation}</p>
     </div>

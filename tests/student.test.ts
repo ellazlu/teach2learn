@@ -198,7 +198,8 @@ test('knowledge stays consistent across many turns', () => {
 const rng0 = () => 0;
 
 test('prerequisite gaps influence question selection', () => {
-  const m = initStudentModel(EXTRACTION, 'high');
+  // A middle schooler doesn't yet know the earlier ideas this builds on.
+  const m = initStudentModel(EXTRACTION, 'middle');
   m.misconceptions = [];
   const c3 = m.concepts.find((c) => c.id === 'c3')!;
   c3.mentioned = true;
@@ -207,6 +208,22 @@ test('prerequisite gaps influence question selection', () => {
   assert.ok(plan);
   assert.equal(plan!.type, 'prerequisite');
   assert.ok(['c1', 'c2'].includes(plan!.conceptId!), `asks about a missing prerequisite, got ${plan!.conceptId}`);
+});
+
+test('older students already know the basics a younger one would lack', () => {
+  const kid = initStudentModel(EXTRACTION, 'middle');
+  const hs = initStudentModel(EXTRACTION, 'high');
+  const uni = initStudentModel(EXTRACTION, 'college');
+  const c1 = (m: typeof kid) => m.concepts.find((c) => c.id === 'c1')!.initialMastery;
+  assert.ok(c1(kid) < c1(hs) && c1(hs) < c1(uni));
+  assert.ok(c1(hs) >= 35, 'a high schooler is not missing an elementary prerequisite');
+  const m = structuredClone(hs);
+  m.misconceptions = [];
+  const c3 = m.concepts.find((c) => c.id === 'c3')!;
+  c3.mentioned = true;
+  c3.explained = true;
+  const plan = selectQuestion(m, { recentConceptIds: ['c3'], rng: rng0 });
+  assert.ok(!plan || plan.conceptId !== 'c1', 'no "what is photosynthesis?" from a high schooler');
 });
 
 test('mentioned-but-unexplained concepts prompt a beginner to ask what it means', () => {

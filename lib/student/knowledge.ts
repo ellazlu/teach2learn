@@ -20,7 +20,7 @@ import type {
   StudentModel,
   Verification,
 } from './types.ts';
-import { getLevel, type Level } from '../levels.ts';
+import { getLevel, isKnownTerm, type Level } from '../levels.ts';
 import { normalize, quoteAppearsIn } from '../verify.ts';
 import { masteryCapFor, nextMisconceptionStatus, selectMisconceptions } from './misconceptions.ts';
 
@@ -270,6 +270,9 @@ export function applyEvaluation(
       events.push({ type: 'unclear_explanation', segmentId: sid, at, conceptId: id, quote: p.quote, levelFit: p.level_fit, gap: String(p.gap || '').trim() });
     }
     if (p.used_example) events.push({ type: 'used_example', segmentId: sid, at, conceptId: id, quote: p.quote });
+    // Accurate-and-clear vs. accurate-but-shallow (missing an essential part or the "why").
+    if (p.correctness === 'correct' && p.clarity !== 'unclear') events.push({ type: 'accurate_explanation', segmentId: sid, at, conceptId: id, quote: p.quote });
+    if (p.correctness === 'partially_correct') events.push({ type: 'shallow_explanation', segmentId: sid, at, conceptId: id, quote: p.quote, gap: String(p.gap || '').trim() });
 
     const gain = MAX_GAIN * quality * prerequisiteFactor(c, next) * level.params.learnRate * ((100 - c.mastery) / 100);
     const cap = masteryCapFor(c.id, next.misconceptions);
@@ -292,6 +295,8 @@ export function applyEvaluation(
   for (const t of proposal.undefined_terms || []) {
     const term = String(t.term || '').trim();
     if (!term || !real(t.quote) || !quoteAppearsIn(term, segment.text, 1)) continue;
+    if (isKnownTerm(term, level.id)) continue; // age-appropriate vocabulary is never "jargon"
+    if (level.id === 'expert') continue; // experts know the field's vocabulary
     if (next.undefinedTerms.some((x) => x.toLowerCase() === term.toLowerCase())) continue;
     next.undefinedTerms = [...next.undefinedTerms, term];
     events.push({ type: 'undefined_term', segmentId: sid, at, term, quote: t.quote });
