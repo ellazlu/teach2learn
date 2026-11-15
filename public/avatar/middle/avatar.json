@@ -1,4 +1,4 @@
 {
   "format": "png",
-  "frames": []
+  "frames": ["listening", "listening-blink", "curious", "confused", "understanding", "challenging", "talking-1", "talking-2"]
 }
