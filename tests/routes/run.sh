@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 ESBUILD="${ESBUILD:-npx esbuild}"
-for r in prepare evaluate reply verify tts feedback; do
+for r in prepare evaluate reply verify tts feedback whiteboard study-feedback; do
   $ESBUILD app/api/$r/route.js --bundle --platform=node --format=esm \
     --alias:next/server=./tests/routes/next-server-stub.js \
     --alias:@anthropic-ai/sdk=./tests/routes/sdk-stub.js \
@@ -17,5 +17,11 @@ $ESBUILD app/api/coach/route.js --bundle --platform=node --format=esm \
   --alias:@anthropic-ai/sdk=./tests/routes/sdk-stub.js \
   --external:deepagents --external:langchain --external:@langchain/anthropic --external:zod \
   --outfile=tests/routes/out/coach.mjs --log-level=error
+$ESBUILD app/api/study-plan/route.js --bundle --platform=node --format=esm \
+  --alias:next/server=./tests/routes/next-server-stub.js \
+  --alias:@anthropic-ai/sdk=./tests/routes/sdk-stub.js \
+  --external:deepagents --external:langchain --external:@langchain/anthropic --external:zod \
+  --outfile=tests/routes/out/study-plan.mjs --log-level=error
 $ESBUILD lib/student/knowledge.ts --bundle --platform=node --format=esm --outfile=tests/routes/out/knowledge.mjs --log-level=error
 node tests/routes/check.mjs
+node tests/routes/study-check.mjs

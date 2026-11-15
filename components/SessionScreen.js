@@ -7,6 +7,10 @@ import { formatTime, postJSON } from '../lib/client';
 import { SessionEngine } from '../lib/student/engine.ts';
 import { fmt } from '../lib/student/speech.ts';
 import { createPlayer } from '../lib/voice';
+import ConceptChecklist from './ConceptChecklist';
+import Whiteboard from './Whiteboard';
+import { MODE_NAME } from '../lib/learner/types.ts';
+import { IDLE_MS, shouldAnalyze } from '../lib/learner/whiteboard.ts';
 
 // Streams the student's reply text; calls onText for each chunk.
 async function streamReply(body, onText, signal) {
@@ -40,6 +44,14 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
   const [extractError, setExtractError] = useState('');
   const [voiceNote, setVoiceNote] = useState('');
   const [typed, setTyped] = useState('');
+  // Teach to Learn only
+  const study = setup.mode === 'student';
+  const [manual, setManual] = useState([]);
+  const [boardOpen, setBoardOpen] = useState(false);
+  const [boardStatus, setBoardStatus] = useState('');
+  const [boardBusy, setBoardBusy] = useState(false);
+  const boardRef = useRef(null);
+  const boardMeta = useRef({ analyzedVersion: -1, lastAutoAt: 0, inFlight: false, n: 0, idle: null });
 
   const engineRef = useRef(null);
   const playerRef = useRef(null);
@@ -93,6 +105,7 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
       timeLimitSec,
       onChange: setSnap,
       persona: setup.challenge?.scenario?.studentProfile || '',
+      ...(study ? { mode: 'student', focusConceptIds: setup.practice ? [setup.practice.conceptId] : [], opening: setup.practice ? { text: setup.practice.prompt, conceptId: setup.practice.conceptId } : null } : {}),
     });
     engineRef.current = engine;
     setSnap(engine.snapshot());
@@ -213,7 +226,54 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
 
   // ---- Ending --------------------------------------------------------------------------
 
+  // ---- Whiteboard (Teach to Learn) -----------------------------------------------------------
+  // Read only on share, after a pause in drawing, or at the end; never per stroke.
+
+  async function analyzeBoard(trigger) {
+    const wb = boardRef.current;
+    const meta = boardMeta.current;
+    const engine = engineRef.current;
+    if (!wb || !engine?.model) return;
+    const gate = { trigger, version: wb.version(), analyzedVersion: meta.analyzedVersion, lastAutoAt: meta.lastAutoAt, now: Date.now(), blank: wb.isBlank(), inFlight: meta.inFlight };
+    if (!shouldAnalyze(gate)) {
+      if (trigger === 'share' && gate.version === meta.analyzedVersion) setBoardStatus('The student has already seen this. Draw something new to share again.');
+      return;
+    }
+    meta.inFlight = true;
+    if (trigger !== 'end') setBoardBusy(true);
+    if (trigger === 'pause') meta.lastAutoAt = Date.now();
+    const version = gate.version;
+    const recent = engine.utterances.filter((u) => u.speaker === 'teacher').slice(-3).map((u) => u.text).join(' ');
+    try {
+      const res = await postJSON('/api/whiteboard', {
+        image: wb.snapshot(),
+        mediaType: 'image/png',
+        topic: engine.extraction?.topicTitle || setup.topic,
+        concepts: engine.model.concepts.map((c) => ({ id: c.id, name: c.name })),
+        recentSpeech: recent + (interimRef.current ? ` ${interimRef.current}` : ''),
+        id: `w${++meta.n}`,
+        at: now(),
+        trigger,
+      });
+      meta.analyzedVersion = version;
+      engine.addBoard({ ...res, thumb: wb.thumb() });
+      setBoardStatus(res.blank ? '' : res.unclear?.length ? 'The student has a question about part of your drawing.' : trigger === 'share' ? 'The student is looking at your board.' : 'The student saw your board.');
+    } catch (err) {
+      setBoardStatus(`Couldn't read the board (${err.message}). The session continues.`);
+    } finally {
+      meta.inFlight = false;
+      setBoardBusy(false);
+    }
+  }
+
+  function onStrokeEnd() {
+    const meta = boardMeta.current;
+    clearTimeout(meta.idle);
+    meta.idle = setTimeout(() => analyzeBoard('pause'), IDLE_MS);
+  }
+
   function stopEverything() {
+    clearTimeout(boardMeta.current.idle);
     listeningRef.current = false;
     clearInterval(timersRef.current.tick);
     playerRef.current?.cancel();
@@ -233,6 +293,11 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
     try { recRef.current?.stop(); } catch {}
     await new Promise((r) => setTimeout(r, 600)); // let the last words arrive
     const engine = engineRef.current;
+    if (study && boardRef.current) {
+      clearTimeout(boardMeta.current.idle);
+      // Final checkpoint: anything drawn since the last reading counts too (bounded wait).
+      await Promise.race([analyzeBoard('end'), new Promise((r) => setTimeout(r, 7000))]);
+    }
     if (interimRef.current) engine.onTeacherFinal(interimRef.current, now(), now());
     interimRef.current = '';
     setInterim('');
@@ -246,6 +311,7 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
       utterances: engine.utterances,
       latencies: engine.latencies,
       timeUsedSec: Math.round(timeUsedSec),
+      ...(study ? { learner: engine.learner, boards: engine.boards, manualChecked: manual } : {}),
     });
   }
 
@@ -283,7 +349,8 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
         <div className="session-meta">
           <span className={`timer ${remaining <= 15 ? 'low' : ''}`}>{formatTime(remaining)}</span>
           <span className="muted">
-            Teaching a {level.label.toLowerCase()}
+            <span className="mode-tag">{MODE_NAME[study ? 'student' : 'educator']}</span>
+            {study ? `Explaining to a ${level.label.toLowerCase()}` : `Teaching a ${level.label.toLowerCase()}`}
             {setup.topic ? ` · ${setup.topic}` : ''}
           </span>
         </div>
@@ -298,6 +365,12 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
           </button>
         </div>
       </div>
+
+      {study && setup.practice && (
+        <p className="challenge-goal">
+          <span className="label">Practice</span> {setup.practice.conceptName}
+        </p>
+      )}
 
       {setup.challenge && (
         <p className="challenge-goal">
@@ -319,13 +392,28 @@ export default function SessionScreen({ setup, level, extraction, onExtraction, 
             {status}
           </p>
           <p className={`caption ${speaking ? 'live' : ''}`} aria-live="polite">
-            {snap?.caption || (utterances.length ? '' : 'Start explaining out loud. Your student will jump in when something needs clearing up.')}
+            {snap?.caption || (utterances.length ? '' : study ? 'Start explaining the first idea on your checklist. The student will ask what it wants to understand.' : 'Start explaining out loud. Your student will jump in when something needs clearing up.')}
           </p>
           {voiceNote && <p className="hint">{voiceNote}</p>}
+          {study && (
+            <div className="wb-wrap">
+              <button type="button" className="btn-text wb-toggle" aria-expanded={boardOpen} onClick={() => setBoardOpen((o) => !o)}>
+                {boardOpen ? 'Hide whiteboard' : 'Use the whiteboard'}
+              </button>
+              {/* Kept mounted when hidden so the drawing survives collapsing. */}
+              <div hidden={!boardOpen}>
+                <Whiteboard ref={boardRef} onStrokeEnd={onStrokeEnd} onShare={() => analyzeBoard('share')} status={boardStatus} busy={boardBusy} disabled={phase === 'finishing' || !snap?.ready} />
+              </div>
+            </div>
+          )}
         </section>
 
         <aside className="side">
-          <StudentPanel model={snap?.model} loading={extractState === 'loading'} error={extractState === 'failed' ? extractError : ''} onRetry={loadExtraction} />
+          {study ? (
+            <ConceptChecklist learner={snap?.learner} manual={manual} onToggle={(id) => setManual((m) => (m.includes(id) ? m.filter((x) => x !== id) : [...m, id]))} />
+          ) : (
+            <StudentPanel model={snap?.model} loading={extractState === 'loading'} error={extractState === 'failed' ? extractError : ''} onRetry={loadExtraction} />
+          )}
           <div className="transcript">
             <h3 className="label">Transcript</h3>
             <div className="convo" ref={convoRef}>

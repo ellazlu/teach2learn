@@ -308,7 +308,7 @@ details summary { cursor: pointer; font-weight: 550; color: var(--ink-2); list-s
 /* ---- Progress ------------------------------------------------------------------------- */
 .progress { max-width: 1000px; display: flex; flex-direction: column; gap: 24px; }
 .progress .page-head { margin-bottom: 0; }
-.panel { border: 1px solid var(--line); border-radius: var(--r); padding: 16px 18px; }
+.progress .panel, .study-progress .panel { border: 1px solid var(--line); border-radius: var(--r); padding: 16px 18px; }
 .panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
 .progress-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
 .recurring { list-style: none; margin: 0; padding: 0; }
@@ -355,6 +355,63 @@ table.data tr.clickable:hover td { background: var(--surface); }
 .coach-log .log-decision .log-name { color: var(--accent); }
 .coach-log .log-detail { word-break: break-word; }
 
+/* ---- Modes (Learn to Teach / Teach to Learn) ------------------------------------------ */
+.mode-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.mode-option { text-align: left; background: var(--bg); border: 1px solid var(--line-2); border-radius: var(--r); padding: 12px 14px; cursor: pointer; display: flex; flex-direction: column; gap: 4px; font: inherit; color: inherit; }
+.mode-option:hover { background: var(--surface); }
+.mode-option.on { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+.mode-name { font-weight: 650; font-size: 15px; }
+.mode-role { font-weight: 500; color: var(--muted); }
+.mode-blurb { font-size: 13px; color: var(--ink-2); line-height: 1.45; }
+.mode-tabs { margin: 0 auto 20px; }
+.mode-tag { font-size: 12px; font-weight: 600; color: var(--ink-2); border: 1px solid var(--line-2); border-radius: 4px; padding: 0 5px; margin-right: 8px; }
+
+/* Checklist review */
+.checklist-setup { max-width: 640px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+.checklist-edit { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.checklist-edit li { display: grid; grid-template-columns: 24px 1fr auto; gap: 8px; align-items: center; }
+.ce-num { font: 12px var(--mono); color: var(--faint); text-align: right; }
+.ce-actions { display: flex; gap: 2px; }
+.icon-btn { width: 30px; height: 30px; border: 1px solid var(--line); background: var(--bg); border-radius: var(--r); cursor: pointer; color: var(--ink-2); font-size: 14px; line-height: 1; }
+.icon-btn:hover:not(:disabled) { background: var(--surface); }
+.icon-btn:disabled { opacity: 0.35; cursor: default; }
+.ce-add { display: flex; gap: 8px; }
+.ce-add .input { flex: 1; }
+
+/* Live checklist */
+.checklist-live > summary { display: flex; justify-content: space-between; align-items: baseline; cursor: pointer; list-style: none; }
+.checklist-live > summary::-webkit-details-marker { display: none; }
+.checklist-live .concept-list { margin-top: 8px; }
+.cl-mark { display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
+.cl-mark input { accent-color: var(--ink); flex: none; }
+.cl-not_covered .concept-name { color: var(--ink-2); font-weight: 500; }
+
+/* Whiteboard */
+.wb-wrap { width: 100%; margin-top: 18px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.whiteboard { width: 100%; display: flex; flex-direction: column; gap: 8px; text-align: left; }
+.wb-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.wb-colors { display: flex; gap: 6px; }
+.wb-color { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--bg); box-shadow: 0 0 0 1px var(--line-2); cursor: pointer; padding: 0; }
+.wb-color.on { box-shadow: 0 0 0 2px var(--ink); }
+.wb-edit { display: flex; gap: 10px; }
+.wb-tools .small-btn { margin-left: auto; }
+.wb-canvas { width: 100%; height: auto; aspect-ratio: 16 / 9; border: 1px solid var(--line-2); border-radius: var(--r); background: #fff; touch-action: none; cursor: crosshair; display: block; }
+.wb-canvas.erasing { cursor: cell; }
+.wb-status { margin: 0; }
+
+/* Teach to Learn results */
+.study-feedback .three-item dd { font-size: 15px; }
+.mis-feedback { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.mis-feedback q { font-style: italic; color: var(--ink-2); }
+.mis-feedback .ts { font: 12px var(--mono); color: var(--faint); }
+.mis-note { display: block; font-size: 14px; }
+.board-list { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.board-list li { display: grid; grid-template-columns: 160px 1fr; gap: 12px; align-items: start; font-size: 14px; }
+.board-thumb { width: 160px; border: 1px solid var(--line); border-radius: var(--r); }
+.study-progress { display: flex; flex-direction: column; gap: 20px; }
+.study-progress h3 { font-size: 16px; margin-bottom: 4px; }
+.topic-title { font-size: 17px; }
+
 /* ---- History ------------------------------------------------------------------------- */
 .history { max-width: 760px; }
 .page-head { display: grid; grid-template-columns: 80px 1fr 80px; align-items: center; margin-bottom: 20px; }
@@ -377,6 +434,9 @@ table.data tr.clickable:hover td { background: var(--surface); }
   .main { padding: 20px 16px 48px; }
   .session-grid, .results-grid, .progress-grid, .rubric { grid-template-columns: 1fr; gap: 24px; }
   .ratings { grid-template-columns: 1fr; gap: 10px; }
+  .mode-pick { grid-template-columns: 1fr; }
+  .checklist-live:not([open]) .concept-list { display: none; }
+  .board-list li { grid-template-columns: 1fr; }
   .topnav { gap: 14px; }
   .coach-log li { grid-template-columns: 48px 1fr; }
   .coach-log .log-type { display: none; }

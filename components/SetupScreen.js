@@ -2,6 +2,12 @@
 
 import { useState } from 'react';
 import { LEVELS } from '../lib/levels.ts';
+import { MODE_NAME, MODE_ROLE } from '../lib/learner/types.ts';
+
+const MODES = [
+  { id: 'educator', blurb: 'Practice teaching a realistic student and receive feedback on your teaching skills.' },
+  { id: 'student', blurb: 'Master academic concepts by teaching them to an AI student who challenges your understanding.' },
+];
 
 const TIME_PRESETS = [1, 2, 3, 5]; // minutes
 const MAX_TOTAL_BYTES = 3 * 1024 * 1024; // keeps requests under Vercel's 4.5 MB body limit
@@ -38,10 +44,11 @@ function readFile(file) {
   });
 }
 
-export default function SetupScreen({ initial, error, onSubmit }) {
+export default function SetupScreen({ initial, error, onSubmit, mode = 'educator', onModeChange = () => {} }) {
+  const study = mode === 'student';
   const initialFiles = (initial?.sources || []).filter((s) => s.name !== 'Pasted text');
   const initialPaste = initial?.sources?.find((s) => s.name === 'Pasted text')?.data || '';
-  const initialMin = initial ? initial.timeLimitSec / 60 : 2;
+  const initialMin = initial ? initial.timeLimitSec / 60 : study ? 5 : 2;
 
   const [files, setFiles] = useState(initialFiles);
   const [pasted, setPasted] = useState(initialPaste);
@@ -74,17 +81,40 @@ export default function SetupScreen({ initial, error, onSubmit }) {
     if (!canSubmit) return;
     const sources = [...files];
     if (pasted.trim()) sources.push({ name: 'Pasted text', kind: 'text', data: pasted.trim(), size: pasted.length });
-    onSubmit({ sources, topic: topic.trim(), levelId, focus, timeLimitSec: Math.round(effectiveMin * 60) });
+    onSubmit({ sources, topic: topic.trim(), levelId, focus, timeLimitSec: Math.round(effectiveMin * 60), mode });
+  }
+
+  function pickMode(m) {
+    if (m === mode) return;
+    onModeChange(m);
+    // Teach to Learn covers 5-10 concepts, so it defaults to a longer session.
+    if (!initial && !customMin) setMinutes(m === 'student' ? 5 : 2);
   }
 
   const showNotes = notesOpen || files.length > 0 || pasted.trim();
 
   return (
     <form className="setup" onSubmit={submit}>
-      <header className="setup-head">
-        <h1>Teach it to learn it.</h1>
-        <p className="muted">Explain a topic out loud to a simulated student. It asks questions, holds a few misconceptions, and has to show it understood. About two minutes is enough.</p>
-      </header>
+      <div className="mode-pick" role="radiogroup" aria-label="Mode">
+        {MODES.map((m) => (
+          <button type="button" role="radio" aria-checked={mode === m.id} key={m.id} className={`mode-option ${mode === m.id ? 'on' : ''}`} onClick={() => pickMode(m.id)}>
+            <span className="mode-name">{MODE_NAME[m.id]} <span className="mode-role">— {MODE_ROLE[m.id]}</span></span>
+            <span className="mode-blurb">{m.blurb}</span>
+          </button>
+        ))}
+      </div>
+
+      {study ? (
+        <header className="setup-head">
+          <h1>Master concepts by explaining them.</h1>
+          <p className="muted">Pick what you're studying. You'll get a short checklist of the key ideas to review, then explain them out loud to a curious student whose questions show you what you really understand.</p>
+        </header>
+      ) : (
+        <header className="setup-head">
+          <h1>Become a better educator.</h1>
+          <p className="muted">Explain a topic out loud to a simulated student. It asks questions, holds a few misconceptions, and has to show it understood. About two minutes is enough.</p>
+        </header>
+      )}
 
       <div className="field">
         <label className="label" htmlFor="topic">Topic</label>
@@ -93,7 +123,7 @@ export default function SetupScreen({ initial, error, onSubmit }) {
           <button type="button" className="btn-text small" onClick={() => setNotesOpen(true)}>+ Add notes or slides (optional)</button>
         ) : (
           <div className="notes">
-            <p className="muted small">The student's concepts and your feedback will stick to what's in your notes.</p>
+            <p className="muted small">{study ? 'Your checklist, the questions and your feedback will stick to what is in your notes.' : "The student's concepts and your feedback will stick to what's in your notes."}</p>
             <label className="file-pick">
               <input type="file" multiple accept=".pdf,.txt,.md,.markdown,image/*" onChange={addFiles} />
               <span>Choose files</span>
@@ -117,7 +147,7 @@ export default function SetupScreen({ initial, error, onSubmit }) {
       </div>
 
       <div className="field">
-        <span className="label" id="level-label">Student</span>
+        <span className="label" id="level-label">{study ? 'Explain it to' : 'Student'}</span>
         <div className="segmented" role="radiogroup" aria-labelledby="level-label">
           {LEVELS.map((l) => (
             <button type="button" role="radio" aria-checked={levelId === l.id} key={l.id} className={levelId === l.id ? 'on' : ''} onClick={() => setLevelId(l.id)}>
@@ -142,7 +172,7 @@ export default function SetupScreen({ initial, error, onSubmit }) {
       {(error || localError) && <p className="error">{error || localError}</p>}
 
       <div className="setup-actions">
-        <button className="btn primary large" type="submit" disabled={!canSubmit}>Start session</button>
+        <button className="btn primary large" type="submit" disabled={!canSubmit}>{study ? 'Build concept checklist' : 'Start session'}</button>
         <span className="muted small">Uses your microphone (Chrome works best). You can also type.</span>
       </div>
     </form>

@@ -32,6 +32,12 @@ import { decideTurn, detectTeacherQuestion, END_OF_TURN_SEC } from './turns.ts';
 import { takeSentences, flushSentences } from './sentences.ts';
 import { specificity, fallbackLine } from './dialogue.ts';
 import { knowledgeForPrompt, taughtAbout } from './persona.ts';
+// Teach to Learn (mode 'student') only:
+import type { BoardAnalysis, LearnerState } from '../learner/types.ts';
+import { applyBoard, applyLearnerEvaluation, initLearner, recordProbe } from '../learner/tracker.ts';
+import { decideLearnerTurn, scoreProbes } from '../learner/probes.ts';
+import { boardSegmentText } from '../learner/whiteboard.ts';
+import { learnerFallbackLine } from '../learner/lines.ts';
 
 export interface Voice {
   begin(): Promise<void>; // pause the mic before the student speaks
@@ -51,6 +57,10 @@ export interface EngineDeps {
   onChange?: (snap: EngineSnapshot) => void;
   seed?: number;
   persona?: string; // practice-challenge student profile, if any
+  // Teach to Learn. Absent/'educator' leaves every Learn to Teach path unchanged.
+  mode?: 'educator' | 'student';
+  focusConceptIds?: string[]; // practice session: concepts to steer toward
+  opening?: { text: string; conceptId: string | null } | null; // practice question the student opens with
 }
 
 export interface EngineSnapshot {
@@ -65,6 +75,8 @@ export interface EngineSnapshot {
   lastError: string;
   lastDecision: string;
   latencies: number[]; // ms from end of teacher speech to start of student audio
+  learner: LearnerState | null; // Teach to Learn only
+  boards: BoardAnalysis[]; // Teach to Learn only
 }
 
 const RECENT_EVALS = 2;
@@ -83,6 +95,8 @@ export class SessionEngine {
   events: KnowledgeEvent[] = [];
   latencies: number[] = [];
   questionsEnabled = true;
+  learner: LearnerState | null = null; // Teach to Learn only
+  boards: BoardAnalysis[] = [];
 
   // background evaluation
   private buffer: SegmentBuffer = emptyBuffer();
@@ -118,6 +132,10 @@ export class SessionEngine {
     this.rng = seededRng(deps.seed ?? Date.now());
   }
 
+  private get student(): boolean {
+    return this.deps.mode === 'student';
+  }
+
   private teachingNow(): number {
     return this.deps.teachingNow ? this.deps.teachingNow() : this.deps.now();
   }
@@ -129,8 +147,10 @@ export class SessionEngine {
     this.extraction = extraction;
     this.model = initStudentModel(extraction, this.levelId);
     this.initialModel = structuredClone(this.model);
+    if (this.student) this.learner = initLearner(extraction, this.deps.focusConceptIds || []);
     this.emit();
     void this.pump();
+    if (this.student && this.deps.opening?.text) void this.sayOpening(this.deps.opening);
   }
 
   // The recognizer heard the teacher start (or keep) talking.
@@ -188,7 +208,10 @@ export class SessionEngine {
       return;
     }
     this.evaluating = true;
-    const seg = mergeSegments(this.queue.splice(0))!;
+    // Whiteboard readings are evaluated on their own (never merged with speech).
+    const wb = this.queue.findIndex((x) => x.source === 'whiteboard');
+    const take = wb === 0 ? 1 : wb > 0 ? wb : this.queue.length;
+    const seg = mergeSegments(this.queue.splice(0, take))!;
     try {
       const open = [...this.model.questions].reverse().find((q) => q.status === 'pending' || q.status === 'partially_answered');
       const earlier = this.utterances.filter((u) => u.speaker === 'teacher' && u.end <= seg.start).map((u) => u.text).join(' ').slice(-400);
@@ -220,6 +243,7 @@ export class SessionEngine {
     const { model, events } = applyEvaluation(this.model, seg, proposal);
     if (model === this.model) return;
     this.model = model;
+    if (this.student && this.learner) this.learner = applyLearnerEvaluation(this.learner, seg, proposal, model);
     this.recordEvents(events);
     const touched = new Set<string>();
     for (const e of events) if ('conceptId' in e && e.conceptId) touched.add(e.conceptId);
@@ -251,9 +275,20 @@ export class SessionEngine {
     const turnText = this.turnText;
     const speechEndedAt = this.lastFinalAt;
     this.turnText = '';
-    const action: TurnAction =
-      this.questionsEnabled || detectTeacherQuestion(turnText)
-        ? decideTurn({
+    const action: TurnAction = !(this.questionsEnabled || detectTeacherQuestion(turnText))
+      ? { kind: 'none', reason: 'questions are off' }
+      : this.student && this.learner
+        ? decideLearnerTurn({
+            learner: this.learner,
+            model: this.model,
+            turnText,
+            now: this.teachingNow(),
+            lastStudentAt: this.lastStudentAt,
+            lastStudentWasQuestion: this.lastStudentWasQuestion,
+            recentConceptIds: [...new Set(this.recentEvalConcepts.flat())],
+            rng: this.rng,
+          })
+        : decideTurn({
             model: this.model,
             turnText,
             now: this.teachingNow(),
@@ -263,8 +298,7 @@ export class SessionEngine {
             recentConceptIds: [...new Set(this.recentEvalConcepts.flat())],
             demoAttempts: this.demoAttempts,
             rng: this.rng,
-          })
-        : { kind: 'none', reason: 'questions are off' };
+          });
     this.lastDecision = action.reason;
     if (action.kind === 'none') {
       this.emit();
@@ -332,11 +366,11 @@ export class SessionEngine {
 
     if (replaced && action.kind === 'ask') {
       await startSpeaking();
-      queueSentence(fallbackLine(action.plan.type, this.intentDetails(action)));
+      queueSentence(this.fallback(action));
     } else if (!signal.aborted) {
       const rest = flushSentences(buf);
       if (rest.length && !started && action.kind === 'ask' && !sentences.length && !specificity(rest.join(' '), this.anchors(action)).ok) {
-        rest.splice(0, rest.length, fallbackLine(action.plan.type, this.intentDetails(action)));
+        rest.splice(0, rest.length, this.fallback(action));
       }
       for (const s of rest) {
         await startSpeaking();
@@ -368,12 +402,15 @@ export class SessionEngine {
     this.utterances.push({ id: `u${++this.uttCounter}`, speaker: 'student', text, start, end });
 
     if (this.model && !this.finishing) {
-      if (action.kind === 'ask') this.model = recordQuestion(this.model, action.plan, text, start);
+      if (action.kind === 'ask') {
+        this.model = recordQuestion(this.model, action.plan, text, start);
+        if (this.student && this.learner) this.learner = recordProbe(this.learner, action.plan, this.model.questions[this.model.questions.length - 1].id, text, start);
+      }
       if (action.kind === 'demonstrate') {
         this.demoAttempts[action.conceptId] = (this.demoAttempts[action.conceptId] || 0) + 1;
         void this.verify(action.conceptId, action.mode, text, start);
       }
-      if (action.kind === 'answer' && action.questionKind === 'content' && action.conceptIds[0]) {
+      if (!this.student && action.kind === 'answer' && action.questionKind === 'content' && action.conceptIds[0]) {
         void this.verify(action.conceptIds[0], 'answer', text, start);
       }
     }
@@ -453,6 +490,11 @@ export class SessionEngine {
     };
   }
 
+  private fallback(action: Ask): string {
+    const d = this.intentDetails(action);
+    return this.student ? learnerFallbackLine(action.plan.type, d) : fallbackLine(action.plan.type, d);
+  }
+
   private anchors(action: Ask): string[] {
     const d = this.intentDetails(action);
     const concept = this.model!.concepts.find((c) => c.id === action.plan.conceptId);
@@ -486,7 +528,79 @@ export class SessionEngine {
       previousQuestion: this.lastStudentWasQuestion ? lastStudentLine : '',
       alreadySaid: this.utterances.filter((u) => u.speaker === 'student').map((u) => u.text).slice(-8),
       ...(this.deps.persona ? { persona: this.deps.persona } : {}),
+      ...(this.student
+        ? {
+            mode: 'student',
+            outline: m.concepts.map((c) => c.name),
+            board: this.learner?.board.latest ? { transcription: this.learner.board.latest.transcription, description: this.learner.board.latest.description } : null,
+          }
+        : {}),
     };
+  }
+
+  // ---- Teach to Learn: whiteboard + opening question ------------------------------------------
+
+  // A whiteboard snapshot was read. Its content is evaluated like speech (so it
+  // counts as evidence on the checklist); if the user explicitly shared it, the
+  // student responds to it right away when nobody is talking.
+  addBoard(a: BoardAnalysis): void {
+    if (!this.student) return;
+    this.boards.push(a);
+    if (a.blank || !this.learner) {
+      this.emit();
+      return;
+    }
+    this.learner = applyBoard(this.learner, a);
+    const text = boardSegmentText(a);
+    if (text && !this.finishing) {
+      this.queue.push({ id: a.id, speaker: 'teacher', text, start: a.at, end: a.at, source: 'whiteboard' });
+      void this.pump();
+    }
+    this.emit();
+    if (a.trigger === 'share') void this.respondToBoard(a);
+  }
+
+  private async respondToBoard(a: BoardAnalysis): Promise<void> {
+    if (!this.model || !this.learner || this.replying || this.speaking || this.finishing || this.interimActive || this.turnText) return;
+    const best = scoreProbes(this.learner, this.model, { recentConceptIds: a.conceptIds, latestConceptIds: a.conceptIds, rng: this.rng })
+      .find((c) => c.type === 'board_clarify' || c.type === 'board_question');
+    if (!best) return;
+    this.lastDecision = `${best.type}: ${best.reason}`;
+    await this.respond({ kind: 'ask', plan: { kind: 'question', ...best }, reason: 'they shared the whiteboard' }, '(They just shared their whiteboard.)', this.deps.now());
+  }
+
+  // Practice sessions open with the planned question, spoken as-is.
+  private async sayOpening(o: { text: string; conceptId: string | null }): Promise<void> {
+    if (!this.model || this.speaking || this.replying) return;
+    const plan = { kind: 'question' as const, type: 'apply_new' as const, conceptId: o.conceptId, misconceptionId: null, followsQuestionId: null, focus: null, reason: 'practice question', score: 1 };
+    this.replying = true;
+    this.speaking = true;
+    this.speakingSince = this.deps.now();
+    this.caption = o.text;
+    this.setBehaviorSpeaking(true);
+    let start = this.deps.now();
+    let end = start;
+    try {
+      await this.deps.voice.begin();
+      const t = await this.deps.voice.sentence(o.text);
+      start = t.start;
+      end = t.end;
+    } catch {
+      end = this.deps.now();
+    }
+    this.deps.voice.end();
+    this.utterances.push({ id: `u${++this.uttCounter}`, speaker: 'student', text: o.text, start, end });
+    if (this.model && !this.finishing) {
+      this.model = recordQuestion(this.model, plan, o.text, start);
+      if (this.learner) this.learner = recordProbe(this.learner, plan, this.model.questions[this.model.questions.length - 1].id, o.text, start);
+    }
+    this.lastStudentWasQuestion = true;
+    this.lastStudentAt = this.teachingNow();
+    this.speaking = false;
+    this.speakingSince = Infinity;
+    this.replying = false;
+    this.lastDecision = 'opened with the practice question';
+    this.setBehaviorSpeaking(false);
   }
 
   // ---- ending ------------------------------------------------------------------------------
@@ -525,6 +639,8 @@ export class SessionEngine {
       lastError: this.lastError,
       lastDecision: this.lastDecision,
       latencies: this.latencies,
+      learner: this.learner,
+      boards: this.boards,
     };
   }
 

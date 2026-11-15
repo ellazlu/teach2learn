@@ -31,7 +31,7 @@ Rules:
 - Be economical: about 6-10 tool calls. Do not use subagents or files. Plan with write_todos once at the start.
 - Finish with one short sentence saying what you saved.`;
 
-type Deps = { createDeepAgent: any; tool: any; z: any; ChatAnthropic: any; todoListMiddleware?: any };
+export type Deps = { createDeepAgent: any; tool: any; z: any; ChatAnthropic: any; todoListMiddleware?: any };
 
 export async function loadDeps(): Promise<Deps> {
   // Imported lazily (and kept out of the bundle via next.config) so the app
@@ -59,7 +59,7 @@ export function toLangChainTools(deps: Deps, tools: CoachTool[]) {
   return tools.map((t) => deps.tool(async (args: any) => t.run(args), { name: t.name, description: t.description, schema: zodSchema(deps.z, t.params) }));
 }
 
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+export function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   let timer: any;
   return Promise.race([p, new Promise<T>((_, rej) => (timer = setTimeout(() => rej(new Error(`coach timed out after ${ms}ms`)), ms)))]).finally(() => clearTimeout(timer));
 }

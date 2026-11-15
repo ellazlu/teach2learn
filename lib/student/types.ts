@@ -102,7 +102,14 @@ export type QuestionType =
   | 'follow_up'
   | 'challenge'
   | 'check_in'
-  | 'curiosity';
+  | 'curiosity'
+  // Teach to Learn probes (lib/learner/probes.ts):
+  | 'reasoning'
+  | 'assumption'
+  | 'apply_new'
+  | 'error_check'
+  | 'board_clarify'
+  | 'board_question';
 
 export type QuestionStatus = 'pending' | 'answered' | 'partially_answered' | 'unanswered';
 
@@ -141,6 +148,7 @@ export interface Segment {
   text: string;
   start: number; // seconds since session start (wall clock)
   end: number;
+  source?: 'speech' | 'whiteboard'; // Teach to Learn: what's drawn is evaluated like speech
 }
 
 // ---- Evaluation (LLM proposal for one teacher segment) -------------------------

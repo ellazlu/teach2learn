@@ -43,7 +43,7 @@ export function stableJitter(key: string, range: number): number {
 
 // ---- Extraction cleanup --------------------------------------------------------
 
-export function sanitizeExtraction(raw: Partial<Extraction> | null | undefined, fromMaterial: boolean): Extraction {
+export function sanitizeExtraction(raw: Partial<Extraction> | null | undefined, fromMaterial: boolean, maxConcepts: number = MAX_CONCEPTS): Extraction {
   const seen = new Set<string>();
   const concepts: ExtractedConcept[] = [];
   for (const c of raw?.concepts || []) {
@@ -58,7 +58,7 @@ export function sanitizeExtraction(raw: Partial<Extraction> | null | undefined, 
       prerequisites: (c.prerequisites || []).map((p) => String(p).trim().toLowerCase()),
       keyTerms: (c.keyTerms || []).map((t) => String(t).trim()).filter(Boolean),
     });
-    if (concepts.length >= MAX_CONCEPTS) break;
+    if (concepts.length >= maxConcepts) break;
   }
   // Prerequisites must point at an *earlier* concept: this drops unknown ids,
   // self-references, and cycles in one rule.
