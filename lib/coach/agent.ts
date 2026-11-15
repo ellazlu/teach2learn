@@ -31,7 +31,7 @@ Rules:
 - Be economical: about 6-10 tool calls. Do not use subagents or files. Plan with write_todos once at the start.
 - Finish with one short sentence saying what you saved.`;
 
-type Deps = { createDeepAgent: any; tool: any; z: any; ChatAnthropic: any };
+type Deps = { createDeepAgent: any; tool: any; z: any; ChatAnthropic: any; todoListMiddleware?: any };
 
 export async function loadDeps(): Promise<Deps> {
   // Imported lazily (and kept out of the bundle via next.config) so the app
@@ -42,7 +42,7 @@ export async function loadDeps(): Promise<Deps> {
     import('zod' as string),
     import('@langchain/anthropic' as string),
   ]);
-  return { createDeepAgent: da.createDeepAgent, tool: lc.tool, z: zod.z || zod.default, ChatAnthropic: anth.ChatAnthropic };
+  return { createDeepAgent: da.createDeepAgent, tool: lc.tool, todoListMiddleware: lc.todoListMiddleware, z: zod.z || zod.default, ChatAnthropic: anth.ChatAnthropic };
 }
 
 export function zodSchema(z: any, params: Record<string, ParamSpec>) {
@@ -106,7 +106,12 @@ export async function runCoach(input: CoachInput, opts: RunOptions = {}): Promis
   const ours = createTools(s, clock);
   try {
     const model = new deps.ChatAnthropic({ model: opts.model || 'claude-sonnet-5-5', apiKey: opts.apiKey, maxTokens: 2048 });
-    const agent = await deps.createDeepAgent({ model, tools: toLangChainTools(deps, ours), systemPrompt: COACH_PROMPT });
+    const agent = await deps.createDeepAgent({
+      model,
+      tools: toLangChainTools(deps, ours),
+      systemPrompt: COACH_PROMPT,
+      middleware: deps.todoListMiddleware ? [deps.todoListMiddleware()] : [],
+    });
     log(s, 'step', 'agent', 'Deep Agents run started.', clock);
     const result: any = await withTimeout(
       agent.invoke({ messages: [{ role: 'user', content: `Review session ${input.session.id} and set up the tutor's next practice challenge.` }] }, { recursionLimit: opts.recursionLimit || 40 }),
