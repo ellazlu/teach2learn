@@ -149,4 +149,5 @@ bash tests/browser/run.sh   # real UI in headless Chromium: Learn to Teach, Teac
 - History and progress are per-browser (localStorage). The L2T Daily leaderboard is server-side.
 - L2T Daily anti-cheat is basic: someone can still type or script good explanations into the live session (typing is allowed by design), and a reply that the client replaces with its built-in fallback line isn't recorded server-side. Usernames aren't unique or moderated.
 - The whiteboard, the Teach to Learn student and the study planner have only been tested with stand-ins for the models.
-- The Deep Agents path was built against the documented `deepagents` / `langchain` JS API but has not been run against the real packages and model yet; it's covered by tests with a stand-in agent. The deterministic coach is fully tested.
+- The Learn to Teach coach's Deep Agents run has worked with the real packages. The Teach to Learn study planner uses the same runtime but has only been tested with a stand-in agent so far.
+- Production builds (`next build`) haven't been run in the development sandbox (no package installs there); run one before deploying.
