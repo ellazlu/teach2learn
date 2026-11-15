@@ -38,7 +38,7 @@ background, never blocking:  /api/evaluate → knowledge model     /api/verify �
   - reacts to your answer to its question
   - briefly acknowledges and lets you continue
   - stays quiet
-- **Knowledge model** (`lib/student/`). Each session covers 1–3 key concepts. Misconceptions persist until explicitly corrected. The model feeds the reply prompt as what the student "knows", so its replies change as it learns.
+- **Knowledge model** (`lib/student/`). The student starts from the concepts on your checklist. Misconceptions persist until explicitly corrected. The model feeds the reply prompt as what the student "knows", so its replies change as it learns.
 
 ### How learning is verified
 Explained is not the same as understood. Near the end (after about 55% of the time), or when you ask "does that make sense?", the student explains a taught concept back in its own words, using only what you told it. On a second try, it applies the concept to a new example. Answers to your questions count too. `/api/verify` grades the statement against the concept's correct description, and code applies the result:
